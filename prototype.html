@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Terminal 原型预览</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: #0c0d0e;
+      color: #d4d4d8;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .font-terminal {
+      font-family: "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0;
+      font-feature-settings: "liga" 0, "calt" 0;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+
+    .cursor-blink {
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+  </style>
+</head>
+<body class="flex flex-col h-screen bg-[#090a0f] text-zinc-300 antialiased select-none">
+
+  <!-- 顶部标题栏 / 标签栏 -->
+  <header class="h-10 bg-[#12131a] border-b border-zinc-800 flex items-center justify-between px-3 shrink-0">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-1.5 pl-1">
+        <span class="w-3 h-3 rounded-full bg-[#ff5f56] inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-[#ffbd2e] inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-[#27c93f] inline-block"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold tracking-wider text-zinc-400">AI TERMINAL</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">v1.0</span>
+      </div>
+    </div>
+
+    <!-- 中间：终端标签页 -->
+    <div class="flex items-center gap-1 overflow-x-auto max-w-xl h-full pt-1">
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-[#1a1b24] border-t border-l border-r border-zinc-700 text-xs text-zinc-200 cursor-pointer">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="font-terminal font-medium">prod-01 (192.168.1.100)</span>
+        <button class="text-zinc-500 hover:text-zinc-300 text-xs ml-1">&times;</button>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-transparent hover:bg-zinc-800/40 text-xs text-zinc-400 cursor-pointer">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="font-terminal font-medium">dev-01</span>
+        <button class="text-zinc-600 hover:text-zinc-400 text-xs ml-1">&times;</button>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-transparent hover:bg-zinc-800/40 text-xs text-zinc-400 cursor-pointer">
+        <span class="w-2 h-2 rounded-full bg-zinc-600"></span>
+        <span class="font-terminal font-medium">local-sh</span>
+        <button class="text-zinc-600 hover:text-zinc-400 text-xs ml-1">&times;</button>
+      </div>
+      <button class="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded text-xs ml-1" title="新建终端">+</button>
+    </div>
+
+    <!-- 右侧功能按键 -->
+    <div class="flex items-center gap-2">
+      <button onclick="toggleModal('modal-server')" class="px-2.5 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        添加主机
+      </button>
+      <button onclick="toggleModal('modal-settings')" class="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded" title="AI 设置">
+        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </button>
+      <button onclick="toggleSidebar('ai-panel')" class="px-2.5 py-1 text-xs rounded bg-indigo-600/80 hover:bg-indigo-600 text-white flex items-center gap-1.5 font-medium">
+        AI 智能体
+      </button>
+    </div>
+  </header>
+
+  <!-- 主体工作区（三栏架构） -->
+  <main class="flex-1 flex overflow-hidden">
+    
+    <!-- 左侧：服务器管理侧边栏 -->
+    <aside id="sidebar-servers" class="w-64 bg-[#101118] border-r border-zinc-800 flex flex-col shrink-0">
+      <div class="p-2 border-b border-zinc-800/80">
+        <div class="relative">
+          <input type="text" placeholder="搜索主机/IP..." class="w-full bg-[#181922] text-xs text-zinc-300 placeholder-zinc-500 rounded px-2.5 py-1.5 pl-7 border border-zinc-800 focus:outline-none focus:border-zinc-700">
+          <svg class="w-3.5 h-3.5 text-zinc-500 absolute left-2 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-2 space-y-3">
+        <!-- 分组：常用收藏 -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
+            <span>常用收藏</span>
+            <span class="text-zinc-600 text-[10px]">3</span>
+          </div>
+          <div class="mt-1 space-y-0.5">
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 text-zinc-200 text-xs cursor-pointer border border-zinc-700/60">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="font-medium truncate">prod-01</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.100</span>
+            </div>
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="truncate">prod-02</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.101</span>
+            </div>
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="truncate">prod-03</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.102</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 分组：开发测试环境 -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
+            <span>开发测试</span>
+            <span class="text-zinc-600 text-[10px]">2</span>
+          </div>
+          <div class="mt-1 space-y-0.5">
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="truncate">dev-01</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">10.0.4.12</span>
+            </div>
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-zinc-600"></span>
+                <span class="truncate">dev-db</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">10.0.4.15</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 分组：本地环境 -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
+            <span>本地终端</span>
+            <span class="text-zinc-600 text-[10px]">1</span>
+          </div>
+          <div class="mt-1 space-y-0.5">
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
+              <div class="flex items-center gap-2 truncate">
+                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                <span class="truncate">Local Shell</span>
+              </div>
+              <span class="text-[10px] text-zinc-500 font-terminal">zsh</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-2.5 border-t border-zinc-800 text-[11px] text-zinc-500 flex items-center justify-between">
+        <span>已存主机: 6 台</span>
+        <button onclick="toggleModal('modal-server')" class="text-indigo-400 hover:underline">新建配置</button>
+      </div>
+    </aside>
+
+    <!-- 中间：核心终端区域 -->
+    <section class="flex-1 flex flex-col bg-[#14151d] overflow-hidden relative">
+      <div class="h-8 bg-[#181924] border-b border-zinc-800/80 px-3 flex items-center justify-between text-xs text-zinc-400">
+        <div class="flex items-center gap-4">
+          <span class="font-terminal text-zinc-300 text-[11px]">root@prod-01: ~</span>
+          <span class="text-zinc-600">|</span>
+          <span class="text-[11px] text-zinc-400">Linux 6.6.137-cloud-arm64</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Clear</button>
+          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Reconnect</button>
+          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Copy All</button>
+        </div>
+      </div>
+
+      <div class="flex-1 p-3 overflow-y-auto font-terminal text-[14px] leading-[20px] text-zinc-300 selection:bg-indigo-500/40 selection:text-white" style="background-color: #12131b;">
+        <div class="text-zinc-500">Connecting to 192.168.1.100:22 as root...</div>
+        <div class="text-zinc-500">Authenticated with publickey (ed25519-sha2-nistp256).</div>
+        <div class="text-zinc-400 mt-1">Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.6.137 aarch64)</div>
+        <div class="text-zinc-500 text-xs mt-0.5">* Documentation:  https://help.ubuntu.com</div>
+        <div class="text-zinc-500 text-xs">* Management:     https://landscape.canonical.com</div>
+        <div class="text-zinc-400 mt-2">Last login: Mon Sep 21 16:32:08 2026 from 10.0.0.5</div>
+        
+        <div class="mt-3">
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"</span>
+        </div>
+        <div class="text-zinc-400 whitespace-pre">CONTAINER ID   NAMES            STATUS          PORTS</div>
+        <div class="text-zinc-300 whitespace-pre">a8f29c41b011   nginx-gateway    Up 4 days       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp</div>
+        <div class="text-zinc-300 whitespace-pre">71b99432ce02   app-backend      Up 4 days       127.0.0.1:8080->8080/tcp</div>
+        <div class="text-zinc-300 whitespace-pre">99ce1204d8ef   redis-cache      Up 12 days      127.0.0.1:6379->6379/tcp</div>
+
+        <div class="mt-3">
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">systemctl status nginx</span>
+        </div>
+        <div class="text-zinc-300">● nginx.service - A high performance web server and a reverse proxy server</div>
+        <div class="text-zinc-400 text-xs">     Loaded: loaded (/usr/lib/systemd/system/nginx.service; enabled; preset: enabled)</div>
+        <div class="text-zinc-400 text-xs">     Active: <span class="text-emerald-400 font-medium">active (running)</span> since Thu 2026-09-17 08:12:01 UTC; 4 days ago</div>
+        <div class="text-zinc-400 text-xs">   Main PID: 1104 (nginx)</div>
+
+        <div class="mt-3">
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">uptime</span>
+        </div>
+        <div class="text-zinc-300"> 17:42:15 up 12 days,  4:10,  2 users,  load average: 0.18, 0.22, 0.19</div>
+
+        <!-- 交互光标 -->
+        <div class="mt-3 flex items-center">
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span>
+          <span class="inline-block w-2.5 h-4 bg-zinc-300 ml-1 cursor-blink"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧：AI Agent 侧边智能面板 -->
+    <aside id="sidebar-ai" class="w-96 bg-[#11121a] border-l border-zinc-800 flex flex-col shrink-0">
+      <div class="h-10 px-3 border-b border-zinc-800 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+          <span class="text-xs font-semibold text-zinc-200">AI 运维助手</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">deepseek-reasoner</span>
+        </div>
+        <div class="flex items-center text-[11px] bg-zinc-800 rounded p-0.5 border border-zinc-700">
+          <button class="px-2 py-0.5 rounded text-zinc-400 hover:text-zinc-200">只读</button>
+          <button class="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium">需确认</button>
+          <button class="px-2 py-0.5 rounded text-zinc-400 hover:text-zinc-200">全权</button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-3 space-y-3.5">
+        <div class="flex flex-col items-end">
+          <div class="bg-indigo-600/20 border border-indigo-500/40 text-zinc-100 text-xs rounded-lg px-3 py-2 max-w-[85%]">
+            检查一下服务器端口 80 和 443 是否正常监听，以及防火墙规则。
+          </div>
+          <span class="text-[10px] text-zinc-500 mt-1">17:40</span>
+        </div>
+
+        <div class="space-y-2">
+          <div class="border border-zinc-800 rounded bg-[#161722] p-2.5">
+            <div class="flex items-center justify-between text-[11px] text-zinc-400">
+              <span class="flex items-center gap-1.5 font-medium text-indigo-300">
+                推理分析与执行计划
+              </span>
+              <span class="text-zinc-600 text-[10px]">耗时 1.2s</span>
+            </div>
+            <div class="mt-2 text-[11px] text-zinc-400 space-y-1 pl-4 border-l border-zinc-800">
+              <div>1. 查询端口监听状态 (`ss -lntp`)</div>
+              <div>2. 检查 ufw / iptables 防火墙规则</div>
+              <div>3. 综合评估并输出诊断结论</div>
+            </div>
+          </div>
+
+          <div class="border border-zinc-800 rounded bg-[#141520] p-2.5 text-xs">
+            <div class="flex items-center justify-between text-zinc-300">
+              <div class="flex items-center gap-1.5 font-terminal text-[11px]">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>terminal.exec</span>
+              </div>
+              <span class="text-[10px] text-emerald-400 font-mono">成功 0</span>
+            </div>
+            <div class="mt-1 font-terminal text-[11px] text-zinc-400 bg-zinc-900/80 px-2 py-1 rounded">
+              ss -tlpn | grep -E ':80|:443'
+            </div>
+            <div class="mt-1.5 text-[11px] text-zinc-400 font-terminal bg-black/40 p-1.5 rounded text-xs whitespace-pre">LISTEN 0 511 0.0.0.0:80   0.0.0.0:* users:(("docker-proxy",pid=842))
+LISTEN 0 511 0.0.0.0:443  0.0.0.0:* users:(("docker-proxy",pid=856))</div>
+          </div>
+
+          <div class="border border-amber-500/40 rounded bg-amber-950/20 p-2.5 text-xs">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-1.5 font-terminal text-[11px] text-amber-300 font-medium">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                <span>terminal.exec (待确认)</span>
+              </div>
+              <span class="text-[10px] text-amber-400">需要授权</span>
+            </div>
+            <div class="mt-1 font-terminal text-[11px] text-zinc-200 bg-black/40 px-2 py-1 rounded border border-amber-500/30">
+              ufw status verbose
+            </div>
+            <div class="mt-2 flex items-center justify-end gap-2">
+              <button class="px-2.5 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300">拒绝</button>
+              <button class="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white font-medium">允许执行</button>
+            </div>
+          </div>
+
+          <div class="bg-zinc-800/40 border border-zinc-800 text-zinc-200 text-xs rounded-lg p-3">
+            <p class="font-medium text-zinc-100 mb-1">检查分析：</p>
+            <p class="text-zinc-300 leading-relaxed">
+              80 与 443 端口已由 Docker 正常监听。待防火墙规则确认放行后，外部网络可顺畅访问。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-3 border-t border-zinc-800 bg-[#12131b]">
+        <div class="relative">
+          <textarea placeholder="向 Agent 描述运维任务或排错需求..." rows="2" class="w-full bg-[#181924] text-xs text-zinc-200 placeholder-zinc-500 rounded-lg p-2.5 border border-zinc-700/60 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+          <div class="flex items-center justify-between mt-1.5">
+            <span class="text-[10px] text-zinc-500">Shift + Enter 换行</span>
+            <button class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded font-medium">发送</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 底部状态栏 -->
+  <footer class="h-6 bg-[#0e0f15] border-t border-zinc-800/90 px-3 flex items-center justify-between text-[11px] text-zinc-400 shrink-0">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="text-zinc-300">已连接: prod-01 (192.168.1.100:22)</span>
+      </div>
+      <span>延迟: 18ms</span>
+      <span>编码: UTF-8</span>
+    </div>
+  </footer>
+
+  <!-- 弹窗 1：添加/编辑服务器配置 -->
+  <div id="modal-server" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-[#161722] border border-zinc-700 rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <h3 class="text-sm font-semibold text-zinc-100">添加主机配置</h3>
+        <button onclick="toggleModal('modal-server')" class="text-zinc-400 hover:text-zinc-200 text-sm">&times;</button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-zinc-400 mb-1">连接名称</label>
+          <input type="text" value="prod-04" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="col-span-2">
+            <label class="block text-zinc-400 mb-1">主机地址 (IP 或域名)</label>
+            <input type="text" placeholder="192.168.1.104" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-zinc-400 mb-1">端口</label>
+            <input type="number" value="22" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">用户名</label>
+          <input type="text" value="root" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">认证方式</label>
+          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+            <option>SSH 私钥</option>
+            <option>密码认证</option>
+            <option>SSH Agent</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">私钥路径或密钥文本</label>
+          <input type="text" value="~/.ssh/id_ed25519" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">分组标签</label>
+          <input type="text" value="生产集群" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+      </div>
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+        <button onclick="toggleModal('modal-server')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">取消</button>
+        <button onclick="toggleModal('modal-server')" class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium">保存连接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹窗 2：AI 供应商与 API 配置 -->
+  <div id="modal-settings" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-[#161722] border border-zinc-700 rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <h3 class="text-sm font-semibold text-zinc-100">AI 智能体模型配置</h3>
+        <button onclick="toggleModal('modal-settings')" class="text-zinc-400 hover:text-zinc-200 text-sm">&times;</button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-zinc-400 mb-1">提供商类型</label>
+          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+            <option>DeepSeek</option>
+            <option>OpenAI</option>
+            <option>Ollama (本地)</option>
+            <option>vLLM</option>
+            <option>自定义 (OpenAI 兼容)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">API Base URL</label>
+          <input type="text" value="https://api.deepseek.com/v1" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">API Key</label>
+          <input type="password" value="sk-xxxxxxxxxxxxxxxxxxxxxxxx" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">模型名称</label>
+          <input type="text" value="deepseek-chat" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-zinc-400 mb-1">危险命令拦截等级</label>
+          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+            <option>高等级 (强制弹窗拦截 rm -rf, dd, mkfs, reboot, iptables)</option>
+            <option>中等级 (拦截格式化与关机指令)</option>
+            <option>全放行 (仅供测试)</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center justify-between pt-2 border-t border-zinc-800">
+        <button class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">测试连接</button>
+        <div class="flex items-center gap-2">
+          <button onclick="toggleModal('modal-settings')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">取消</button>
+          <button onclick="toggleModal('modal-settings')" class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium">应用配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleModal(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('hidden');
+    }
+    function toggleSidebar(id) {
+      if (id === 'ai-panel') {
+        const el = document.getElementById('sidebar-ai');
+        if (el) el.classList.toggle('hidden');
+      }
+    }
+  </script>
+</body>
+</html>
