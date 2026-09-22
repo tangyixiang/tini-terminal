@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
 
 jobs:
   release:
@@ -44,22 +45,39 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Set Release Tag
+        id: release_info
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "release_name=App ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=v__VERSION__" >> $GITHUB_OUTPUT
+            echo "release_name=App v__VERSION__" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'App v__VERSION__'
+          tagName: ${{ steps.release_info.outputs.tag_name }}
+          releaseName: ${{ steps.release_info.outputs.release_name }}
           releaseBody: 'See the assets to download this release.'
           releaseDraft: true
           prerelease: false
