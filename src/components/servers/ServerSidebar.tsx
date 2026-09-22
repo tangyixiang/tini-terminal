@@ -145,7 +145,9 @@ export const ServerSidebar: React.FC = () => {
               className="text-[10px] font-terminal"
               style={{ color: currentTheme.ui.textMuted }}
             >
-              zsh/bash
+              {typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent)
+                ? 'PowerShell'
+                : 'zsh/bash'}
             </span>
           </div>
         </div>

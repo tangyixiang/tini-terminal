@@ -14,6 +14,8 @@ import {
   Cpu,
   Trash2,
   Square,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -25,7 +27,19 @@ import { MarkdownView } from './MarkdownView';
 export const AgentPanel: React.FC = () => {
   const [input, setInput] = useState('');
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleCopyText = async (id: string, text: string) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 2000);
+    } catch {
+      // 忽略复制异常
+    }
+  };
 
   const {
     messages,
@@ -180,7 +194,7 @@ export const AgentPanel: React.FC = () => {
       </div>
 
       {/* 消息与多步任务时间线 */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
+      <div className="flex-1 overflow-y-auto p-3 space-y-3.5 select-text">
         {messages.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center h-full space-y-2 text-center p-4"
@@ -197,23 +211,35 @@ export const AgentPanel: React.FC = () => {
         ) : (
           messages.map((msg) => {
             if (msg.role === 'user') {
+              const isCopied = copiedId === msg.id;
               return (
-                <div key={msg.id} className="flex flex-col items-end">
-                  <div
-                    className="border rounded-lg px-3 py-2 max-w-[85%] break-words leading-relaxed"
-                    style={{
-                      backgroundColor: currentTheme.isDark
-                        ? 'rgba(99, 102, 241, 0.2)'
-                        : 'rgba(9, 105, 218, 0.1)',
-                      borderColor: currentTheme.ui.accent,
-                      color: currentTheme.ui.text,
-                      fontSize: `${baseFontSize}px`,
-                    }}
-                  >
-                    {msg.content}
+                <div key={msg.id} className="flex flex-col items-end group select-text">
+                  <div className="flex items-start gap-1.5 max-w-[85%]">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(msg.id, msg.content)}
+                      className="opacity-0 group-hover:opacity-70 hover:!opacity-100 p-1 rounded transition-all cursor-pointer shrink-0 mt-1"
+                      style={{ color: isCopied ? '#10b981' : currentTheme.ui.textMuted }}
+                      title={isCopied ? '已复制' : '复制提问'}
+                    >
+                      {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    <div
+                      className="border rounded-lg px-3 py-2 break-words leading-relaxed select-text"
+                      style={{
+                        backgroundColor: currentTheme.isDark
+                          ? 'rgba(99, 102, 241, 0.2)'
+                          : 'rgba(9, 105, 218, 0.1)',
+                        borderColor: currentTheme.ui.accent,
+                        color: currentTheme.ui.text,
+                        fontSize: `${baseFontSize}px`,
+                      }}
+                    >
+                      {msg.content}
+                    </div>
                   </div>
                   <span
-                    className="mt-1"
+                    className="mt-1 mr-1 select-none"
                     style={{ color: currentTheme.ui.textMuted, fontSize: `${smallFontSize}px` }}
                   >
                     {new Date(msg.timestamp).toLocaleTimeString()}
@@ -257,11 +283,13 @@ export const AgentPanel: React.FC = () => {
                     }}
                   >
                     <div
-                      onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
-                      className="flex items-center justify-between font-medium cursor-pointer select-none"
+                      className="flex items-center justify-between font-medium select-none"
                       style={{ color: currentTheme.ui.accent, fontSize: `${subFontSize}px` }}
                     >
-                      <span className="flex items-center gap-1.5">
+                      <span
+                        onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
+                        className="flex items-center gap-1.5 cursor-pointer flex-1"
+                      >
                         {isLatestAssistant && !msg.content ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                         ) : (
@@ -275,11 +303,36 @@ export const AgentPanel: React.FC = () => {
                             : '思考与推理分析'}
                         </span>
                       </span>
-                      {isThinkingExpanded ? (
-                        <ChevronDown className="w-3.5 h-3.5 shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCopyText(`think-${msg.id}`, msg.thinking || '');
+                          }}
+                          className="p-1 rounded hover:opacity-100 opacity-60 transition-opacity cursor-pointer"
+                          style={{
+                            color: copiedId === `think-${msg.id}` ? '#10b981' : currentTheme.ui.textMuted,
+                          }}
+                          title={copiedId === `think-${msg.id}` ? '已复制' : '复制思考内容'}
+                        >
+                          {copiedId === `think-${msg.id}` ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <span
+                          onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
+                          className="cursor-pointer p-0.5"
+                        >
+                          {isThinkingExpanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                          )}
+                        </span>
+                      </div>
                     </div>
                     {isThinkingExpanded && (
                       <div
@@ -450,7 +503,7 @@ export const AgentPanel: React.FC = () => {
                 {/* AI 结论或回复内容 */}
                 {msg.content && (
                   <div
-                    className="border rounded-lg p-3 leading-relaxed transition-colors"
+                    className="border rounded-lg p-3 leading-relaxed transition-colors select-text group/content"
                     style={{
                       backgroundColor: currentTheme.ui.cardBg,
                       borderColor: currentTheme.ui.border,
@@ -458,6 +511,34 @@ export const AgentPanel: React.FC = () => {
                       fontSize: `${baseFontSize}px`,
                     }}
                   >
+                    <div
+                      className="flex items-center justify-between pb-1.5 mb-2 border-b select-none"
+                      style={{ borderColor: currentTheme.ui.border }}
+                    >
+                      <span className="text-[11px] font-medium opacity-60">AI 分析结果</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(msg.id, msg.content)}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium cursor-pointer hover:opacity-100 opacity-70 transition-all"
+                        style={{
+                          color: copiedId === msg.id ? '#10b981' : currentTheme.ui.text,
+                          backgroundColor: currentTheme.ui.hoverBg,
+                        }}
+                        title={copiedId === msg.id ? '已复制' : '复制回复'}
+                      >
+                        {copiedId === msg.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span>已复制</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>复制</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <MarkdownView
                       content={msg.content}
                       theme={currentTheme}

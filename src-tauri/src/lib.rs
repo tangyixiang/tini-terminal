@@ -147,8 +147,11 @@ async fn ssh_exec_command(
 async fn exec_local_command(command: String) -> Result<SshExecResult, String> {
     tokio::task::spawn_blocking(move || {
         let start = std::time::Instant::now();
-        let shell = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
-        let flag = if cfg!(target_os = "windows") { "/C" } else { "-c" };
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("powershell", "-Command")
+        } else {
+            ("sh", "-c")
+        };
         let output = std::process::Command::new(shell)
             .arg(flag)
             .arg(&command)

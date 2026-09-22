@@ -1,4 +1,4 @@
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -15,6 +15,7 @@ pub struct TerminalOutputPayload {
 struct LocalSession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
+    _child: Box<dyn Child + Send + Sync>,
 }
 
 pub struct PtyManager {
@@ -45,17 +46,23 @@ impl PtyManager {
             })
             .map_err(|e| format!("无法创建虚拟终端: {}", e))?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-            if cfg!(target_os = "macos") {
-                "/bin/zsh".to_string()
-            } else {
-                "/bin/bash".to_string()
-            }
-        });
+        let shell = if cfg!(target_os = "windows") {
+            "powershell.exe".to_string()
+        } else {
+            std::env::var("SHELL").unwrap_or_else(|_| {
+                if cfg!(target_os = "macos") {
+                    "/bin/zsh".to_string()
+                } else {
+                    "/bin/bash".to_string()
+                }
+            })
+        };
 
         let mut cmd = CommandBuilder::new(shell);
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
+        if !cfg!(target_os = "windows") {
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("COLORTERM", "truecolor");
+        }
 
         let _child = pair
             .slave
@@ -99,6 +106,7 @@ impl PtyManager {
             LocalSession {
                 writer,
                 master: pair.master,
+                _child,
             },
         );
 

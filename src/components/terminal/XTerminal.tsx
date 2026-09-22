@@ -21,24 +21,40 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
   const fitAddonRef = useRef<FitAddon | null>(null);
   const setupConnectionRef = useRef<(() => Promise<void>) | null>(null);
   const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
   const setTabConnected = useTerminalStore((state) => state.setTabConnected);
   const themeId = useSettingsStore((state) => state.themeId);
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const isSftpDrawerOpen = useSettingsStore((state) => state.isSftpDrawerOpen);
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
 
-  useEffect(() => {
-    isActiveRef.current = isActive;
-  }, [isActive]);
+  const focusTerminal = () => {
+    if (!termRef.current) return;
+    try {
+      termRef.current.focus();
+      if (termRef.current.textarea) {
+        termRef.current.textarea.focus({ preventScroll: true });
+      }
+    } catch {}
+  };
 
   // 1. 初始化终端实例
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent);
+    const terminalFontFamily = isWindows
+      ? "'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace"
+      : "Menlo, Monaco, 'PingFang SC', monospace";
+
     const initialTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
 
     const term = new Terminal({
-      fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+      fontFamily: terminalFontFamily,
       fontSize: terminalFontSize || 14,
       lineHeight: 1.42,
       letterSpacing: 0,
@@ -79,12 +95,12 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
           if (window.__TAURI_INTERNALS__) {
             await Promise.race([
               invoke('send_terminal_input', {
-                sessionId: tab.sessionId,
-                isSsh: tab.isSsh,
+                sessionId: tabRef.current.sessionId,
+                isSsh: tabRef.current.isSsh,
                 data: chunk,
               }),
               new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('发送终端输入超时')), 5000)
+                setTimeout(() => reject(new Error('发送终端输入超时')), 3000)
               ),
             ]);
           }
@@ -220,19 +236,6 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
   // 动态响应当前标签激活，自动聚焦并全面重新排版与同步远端 PTY
   useEffect(() => {
     if (isActive && termRef.current) {
-      if (termRef.current.textarea) {
-        termRef.current.textarea.tabIndex = 0;
-      }
-
-      const focusActiveTerminal = () => {
-        if (!termRef.current || !isActiveRef.current) return;
-        termRef.current.focus();
-        if (termRef.current.textarea) {
-          termRef.current.textarea.tabIndex = 0;
-          termRef.current.textarea.focus({ preventScroll: true });
-        }
-      };
-
       const resize = () => {
         if (!containerRef.current || !termRef.current || !fitAddonRef.current) return;
         const { clientWidth, clientHeight } = containerRef.current;
@@ -243,8 +246,8 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
           const rows = termRef.current.rows;
           if (cols >= 20 && rows >= 5 && window.__TAURI_INTERNALS__) {
             invoke('resize_terminal', {
-              sessionId: tab.sessionId,
-              isSsh: tab.isSsh,
+              sessionId: tabRef.current.sessionId,
+              isSsh: tabRef.current.isSsh,
               cols,
               rows,
             }).catch(() => {});
@@ -253,21 +256,21 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       };
 
       resize();
-      focusActiveTerminal();
+      focusTerminal();
 
       const rAF = requestAnimationFrame(() => {
         resize();
-        focusActiveTerminal();
+        focusTerminal();
       });
 
       const t1 = setTimeout(() => {
         resize();
-        focusActiveTerminal();
+        focusTerminal();
       }, 50);
 
       const t2 = setTimeout(() => {
         resize();
-        focusActiveTerminal();
+        focusTerminal();
       }, 150);
 
       return () => {
@@ -277,10 +280,6 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       };
     } else if (!isActive && termRef.current) {
       termRef.current.blur();
-      if (termRef.current.textarea) {
-        termRef.current.textarea.tabIndex = -1;
-        termRef.current.textarea.blur();
-      }
     }
   }, [isActive, tab.sessionId, tab.isSsh]);
 
@@ -380,13 +379,11 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       if (customEvent?.detail?.tabId && customEvent.detail.tabId !== tab.id) {
         return;
       }
-      if (isActive && termRef.current) {
-        termRef.current.focus();
-        if (termRef.current.textarea) {
-          termRef.current.textarea.tabIndex = 0;
-          termRef.current.textarea.focus({ preventScroll: true });
+      setTimeout(() => {
+        if (isActiveRef.current) {
+          focusTerminal();
         }
-      }
+      }, 20);
     };
     window.addEventListener('terminal:refocus', handleRefocus);
     window.addEventListener('focus', handleRefocus);
@@ -394,26 +391,71 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       window.removeEventListener('terminal:refocus', handleRefocus);
       window.removeEventListener('focus', handleRefocus);
     };
-  }, [isActive, tab.id]);
+  }, [tab.id]);
 
-  // 容器点击时确保直接穿透聚焦到 xterm 内部输入组件
+  // 全局快捷输入兜底：当终端处于激活状态时，非输入框区域的按键自动聚焦终端，杜绝按键丢失
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // 忽略单独按下的控制修饰键
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl === termRef.current?.textarea) return;
+
+      // 如果当前焦点位于页面的其他有效输入控件内（如 AI 对话输入框、弹窗等），绝不抢占
+      if (
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.isContentEditable ||
+          activeEl.closest('[role="dialog"]') ||
+          activeEl.closest('input') ||
+          activeEl.closest('textarea'))
+      ) {
+        return;
+      }
+
+      focusTerminal();
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown, true);
+    };
+  }, [isActive]);
+
+  // 监听字体加载就绪，自动重新计算排版布局
+  useEffect(() => {
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (fitAddonRef.current && termRef.current) {
+          try {
+            fitAddonRef.current.fit();
+            termRef.current.refresh(0, termRef.current.rows - 1);
+          } catch {}
+        }
+      });
+    }
+  }, []);
+
+  // 容器点击与鼠标按下时确保直接穿透聚焦到 xterm 内部输入组件
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const focusTerm = () => {
-      if (isActiveRef.current && termRef.current) {
-        termRef.current.focus();
-        if (termRef.current.textarea) {
-          termRef.current.textarea.tabIndex = 0;
-          termRef.current.textarea.focus({ preventScroll: true });
-        }
+    const handleContainerFocus = () => {
+      if (isActiveRef.current) {
+        focusTerminal();
       }
     };
-    el.addEventListener('mousedown', focusTerm);
-    el.addEventListener('click', focusTerm);
+    el.addEventListener('mousedown', handleContainerFocus);
+    el.addEventListener('click', handleContainerFocus);
+    el.addEventListener('pointerdown', handleContainerFocus);
     return () => {
-      el.removeEventListener('mousedown', focusTerm);
-      el.removeEventListener('click', focusTerm);
+      el.removeEventListener('mousedown', handleContainerFocus);
+      el.removeEventListener('click', handleContainerFocus);
+      el.removeEventListener('pointerdown', handleContainerFocus);
     };
   }, []);
 
@@ -459,30 +501,22 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
 
   return (
     <div
-      className="flex-1 w-full h-full overflow-hidden transition-colors duration-200 cursor-text"
+      className="flex-1 w-full h-full overflow-hidden transition-colors duration-200 cursor-text relative"
       style={{ backgroundColor: currentTheme.ui.terminalBg }}
       onClick={() => {
         if (isActive) {
-          termRef.current?.focus();
-          if (termRef.current?.textarea) {
-            termRef.current.textarea.tabIndex = 0;
-            termRef.current.textarea.focus({ preventScroll: true });
-          }
+          focusTerminal();
         }
       }}
       onMouseDown={() => {
         if (isActive) {
-          termRef.current?.focus();
-          if (termRef.current?.textarea) {
-            termRef.current.textarea.tabIndex = 0;
-            termRef.current.textarea.focus({ preventScroll: true });
-          }
+          focusTerminal();
         }
       }}
     >
       <div
         ref={containerRef}
-        className="w-full h-full p-2 overflow-hidden select-text"
+        className="w-full h-full p-2 overflow-hidden"
         style={{ backgroundColor: currentTheme.ui.terminalBg }}
       />
     </div>

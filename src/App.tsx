@@ -169,7 +169,6 @@ export const App: React.FC = () => {
                 {tabs.map((tab) => (
                   <div
                     key={tab.id}
-                    inert={tab.id !== activeTabId || undefined}
                     className={`w-full h-full ${
                       tab.id === activeTabId
                         ? 'relative z-10'

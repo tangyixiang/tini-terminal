@@ -65,6 +65,7 @@ export const SettingsModal: React.FC = () => {
   if (!isSettingsModalOpen) return null;
 
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
+  const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent);
 
   const selectedProvider: AiProviderConfig =
     providers.find((p) => p.id === selectedProviderId) ||
@@ -434,7 +435,11 @@ export const SettingsModal: React.FC = () => {
                   <input
                     type="text"
                     readOnly
-                    value="Menlo, Monaco, 'Courier New', monospace"
+                    value={
+                      isWindows
+                        ? "Cascadia Mono, Consolas, 微软雅黑"
+                        : "Menlo, Monaco, 苹方 (PingFang SC)"
+                    }
                     className="w-full border rounded px-2.5 py-1.5 font-mono text-[11px] cursor-not-allowed opacity-80"
                     style={{
                       backgroundColor: currentTheme.ui.inputBg,

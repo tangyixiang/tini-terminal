@@ -21,10 +21,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   openLocalTab: () => {
     const id = 'tab-' + Math.random().toString(36).substring(2, 9);
+    const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent);
     const newTab: TerminalTab = {
       id,
       sessionId: id,
-      title: 'Local Shell',
+      title: isWindows ? 'PowerShell' : 'Local Shell',
       isSsh: false,
       connected: true,
     };
