@@ -94,8 +94,20 @@ impl SshManager {
                         .map_err(|e| format!("私钥文件认证失败: {}", e))?;
                 } else {
                     // 密钥文本
-                    sess.userauth_pubkey_memory(&options.username, None, &key_data, pass)
-                        .map_err(|e| format!("私钥内容认证失败: {}", e))?;
+                    #[cfg(unix)]
+                    {
+                        sess.userauth_pubkey_memory(&options.username, None, &key_data, pass)
+                            .map_err(|e| format!("私钥内容认证失败: {}", e))?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let temp_key_path = std::env::temp_dir().join(format!("ssh_key_{}", uuid::Uuid::new_v4()));
+                        std::fs::write(&temp_key_path, &key_data)
+                            .map_err(|e| format!("写入临时私钥文件失败: {}", e))?;
+                        let auth_res = sess.userauth_pubkey_file(&options.username, None, &temp_key_path, pass);
+                        let _ = std::fs::remove_file(&temp_key_path);
+                        auth_res.map_err(|e| format!("私钥内容认证失败: {}", e))?;
+                    }
                 }
             }
             "agent" => {
