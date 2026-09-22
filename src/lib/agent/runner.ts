@@ -1,3 +1,4 @@
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
@@ -5,11 +6,116 @@ import { AGENT_TOOLS, checkSafety, executeToolCall } from './tools';
 import type { ToolCallItem } from '../../types';
 
 let currentAbortController: AbortController | null = null;
+let currentRequestId: string | null = null;
+
+interface StreamEventPayload {
+  event_type: 'chunk' | 'error' | 'done';
+  data?: string;
+}
+
+async function streamChatCompletion(
+  baseUrl: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  onChunk: (chunkText: string) => void,
+): Promise<void> {
+  if (window.__TAURI_INTERNALS__) {
+    const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
+    currentRequestId = requestId;
+
+    return new Promise<void>((resolve, reject) => {
+      const channel = new Channel<StreamEventPayload>();
+
+      const abortHandler = () => {
+        invoke('abort_ai_chat', { requestId }).catch(() => {});
+        currentRequestId = null;
+        resolve();
+      };
+
+      if (signal.aborted) {
+        abortHandler();
+        return;
+      }
+      signal.addEventListener('abort', abortHandler, { once: true });
+
+      channel.onmessage = (event) => {
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+        if (event.event_type === 'chunk' && event.data) {
+          onChunk(event.data);
+        } else if (event.event_type === 'error') {
+          signal.removeEventListener('abort', abortHandler);
+          currentRequestId = null;
+          reject(new Error(event.data || '大模型网络请求异常'));
+        } else if (event.event_type === 'done') {
+          signal.removeEventListener('abort', abortHandler);
+          currentRequestId = null;
+          resolve();
+        }
+      };
+
+      invoke('stream_ai_chat', {
+        req: {
+          request_id: requestId,
+          base_url: baseUrl,
+          api_key: apiKey || '',
+          body,
+        },
+        channel,
+      }).catch((err) => {
+        signal.removeEventListener('abort', abortHandler);
+        currentRequestId = null;
+        reject(new Error(err?.toString() || '启动大模型网络请求失败'));
+      });
+    });
+  } else {
+    // 浏览器环境兜底
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`LLM API 响应错误 (HTTP ${res.status}): ${errText}`);
+    }
+
+    if (!res.body) {
+      throw new Error('未获取到流式响应数据主体');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+
+    while (true) {
+      if (signal.aborted) {
+        reader.cancel().catch(() => {});
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      onChunk(text);
+    }
+  }
+}
 
 export function abortAgentTask(): void {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
+  }
+  if (currentRequestId && window.__TAURI_INTERNALS__) {
+    invoke('abort_ai_chat', { requestId: currentRequestId }).catch(() => {});
+    currentRequestId = null;
   }
   const agentStore = useAgentStore.getState();
   if (agentStore.approvalResolver) {
@@ -117,39 +223,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
       if (signal.aborted) break;
       loopCount++;
 
-      // 流式请求 LLM
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          messages: conversation,
-          tools: AGENT_TOOLS,
-          tool_choice: 'auto',
-          temperature: 0.2,
-          stream: true,
-        }),
-        signal,
-      });
-
-      if (signal.aborted) break;
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`LLM API 响应错误 (HTTP ${res.status}): ${errText}`);
-      }
-
-      if (!res.body) {
-        throw new Error('未获取到流式响应数据主体');
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
       let buffer = '';
-
       let loopThinking = '';
       let loopContent = '';
       const toolCallsMap: Map<number, { id: string; name: string; args: string }> = new Map();
@@ -157,19 +231,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
       const loopStartTime = Date.now();
       let thinkingDuration: number | undefined = undefined;
 
-      while (true) {
-        if (signal.aborted) {
-          reader.cancel().catch(() => {});
-          break;
-        }
-
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
+      const handleLines = (lines: string[]) => {
         let updated = false;
 
         for (const line of lines) {
@@ -268,6 +330,31 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
             content: mergedContent,
           }));
         }
+      };
+
+      await streamChatCompletion(
+        baseUrl,
+        apiKey || '',
+        {
+          model,
+          messages: conversation,
+          tools: AGENT_TOOLS,
+          tool_choice: 'auto',
+          temperature: 0.2,
+          stream: true,
+        },
+        signal,
+        (chunkText) => {
+          buffer += chunkText;
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          handleLines(lines);
+        },
+      );
+
+      if (buffer.trim()) {
+        handleLines([buffer.trim()]);
+        buffer = '';
       }
 
       if (signal.aborted) break;

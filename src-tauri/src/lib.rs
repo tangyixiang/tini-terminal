@@ -5,7 +5,7 @@ mod sftp;
 mod ssh;
 mod storage;
 
-use agent::{AgentService, TestAiRequest, TestAiResponse};
+use agent::{AgentService, AiStreamEvent, StreamAiChatRequest, TestAiRequest, TestAiResponse};
 use pty::{PtyManager, TerminalOutputPayload};
 use safety::{SafetyCheckResult, SafetyManager};
 use sftp::{SftpListResult, SftpManager};
@@ -22,6 +22,7 @@ pub struct AppState {
     pub pty: PtyManager,
     pub ssh: SshManager,
     pub safety: SafetyManager,
+    pub agent: AgentService,
 }
 
 // ---------------- 服务器管理命令 ----------------
@@ -396,6 +397,22 @@ async fn test_ai_connection(req: TestAiRequest) -> TestAiResponse {
     AgentService::test_connection(req).await
 }
 
+#[tauri::command]
+async fn stream_ai_chat(
+    state: State<'_, Arc<AppState>>,
+    req: StreamAiChatRequest,
+    channel: Channel<AiStreamEvent>,
+) -> Result<(), String> {
+    let agent = state.agent.clone();
+    agent.stream_chat(req, channel).await
+}
+
+#[tauri::command]
+fn abort_ai_chat(state: State<Arc<AppState>>, request_id: String) -> Result<(), String> {
+    state.agent.abort_chat(&request_id);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app_state = Arc::new(AppState {
@@ -403,6 +420,7 @@ pub fn run() {
         pty: PtyManager::new(),
         ssh: SshManager::new(),
         safety: SafetyManager::new(),
+        agent: AgentService::new(),
     });
 
     tauri::Builder::default()
@@ -443,6 +461,8 @@ pub fn run() {
             sftp_download_file,
             check_command_safety,
             test_ai_connection,
+            stream_ai_chat,
+            abort_ai_chat,
             log_debug,
             drag_window,
             toggle_maximize_window
