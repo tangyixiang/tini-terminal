@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "1.0.0"
 description = "Tini Terminal (SSH & AI Assistant)"
 authors = ["Tini Terminal Team"]
 edition = "2021"
