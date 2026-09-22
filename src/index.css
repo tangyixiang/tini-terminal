@@ -56,11 +56,11 @@
   50% { opacity: 0; }
 }
 
-/* 拖拽调宽手柄：热区 6px，视觉高亮线条仅 2px 极细设计 */
+/* 拖拽调宽手柄：热区 10px 便于轻松抓取，视觉高亮线条保持 2px 极细设计 */
 .resize-handle-x {
-  width: 6px;
-  margin-left: -3px;
-  margin-right: -3px;
+  width: 10px;
+  margin-left: -5px;
+  margin-right: -5px;
   cursor: col-resize;
   position: relative;
   z-index: 30;

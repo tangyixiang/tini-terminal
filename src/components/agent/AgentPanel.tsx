@@ -16,6 +16,8 @@ import {
   Square,
   Copy,
   Check,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -49,7 +51,13 @@ export const AgentPanel: React.FC = () => {
     clearMessages,
   } = useAgentStore();
 
-  const { themeId, aiPanelWidth, toggleAiPanel, terminalFontSize } = useSettingsStore();
+  const {
+    themeId,
+    aiPanelWidth,
+    setAiPanelWidth,
+    toggleAiPanel,
+    terminalFontSize,
+  } = useSettingsStore();
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
 
   // 动态字体大小联动（由系统字体配置统一驱动）
@@ -180,6 +188,26 @@ export const AgentPanel: React.FC = () => {
             title="清空对话"
           >
             <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => {
+              if (aiPanelWidth > 500) {
+                setAiPanelWidth(360);
+              } else {
+                const wideWidth = Math.min(Math.round(window.innerWidth * 0.48), window.innerWidth - 320);
+                setAiPanelWidth(Math.max(600, wideWidth));
+              }
+            }}
+            className="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity"
+            style={{ color: currentTheme.ui.text }}
+            title={aiPanelWidth > 500 ? '恢复紧凑宽度' : '加宽面板'}
+          >
+            {aiPanelWidth > 500 ? (
+              <Minimize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Maximize2 className="w-3.5 h-3.5" />
+            )}
           </button>
 
           <button

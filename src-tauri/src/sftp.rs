@@ -229,6 +229,21 @@ impl SftpManager {
                 .sftp()
                 .map_err(|e| format!("初始化 SFTP 失败: {}", e))?;
 
+            // 自动递归创建远程父级目录，避免路径不存在导致写入失败
+            let normalized_path = remote_path.replace('\\', "/");
+            let parts: Vec<&str> = normalized_path.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.len() > 1 {
+                let is_abs = normalized_path.starts_with('/');
+                let mut current = if is_abs { String::from("/") } else { String::new() };
+                for i in 0..(parts.len() - 1) {
+                    if !current.ends_with('/') && !current.is_empty() {
+                        current.push('/');
+                    }
+                    current.push_str(parts[i]);
+                    let _ = sftp.mkdir(Path::new(&current), 0o755);
+                }
+            }
+
             let mut file = sftp
                 .create(Path::new(remote_path))
                 .map_err(|e| format!("创建/打开远程文件失败: {}", e))?;

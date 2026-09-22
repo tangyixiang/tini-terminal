@@ -314,16 +314,12 @@ impl SshManager {
         session_id: &str,
         command: &str,
     ) -> Result<SshExecResult, String> {
-        let session_arc = {
-            let sessions = self.sessions.lock().unwrap();
-            let session_handle = sessions
-                .get(session_id)
-                .ok_or_else(|| "未找到指定主机连接会话".to_string())?;
-            Arc::clone(&session_handle.session)
-        };
+        // 复用独立的辅助通道连接，彻底与交互式终端的 PTY 线程解耦，避免套接字竞争
+        let session_arc = self.get_or_create_sftp_session(session_id)?;
 
         let sess = session_arc.lock().unwrap();
-        // 保持 non-blocking 模式，严禁调用 sess.set_blocking(true)，避免破坏后台终端读取线程
+        sess.set_blocking(false);
+
         let mut ch = loop {
             match sess.channel_session() {
                 Ok(c) => break c,
@@ -348,14 +344,18 @@ impl SshManager {
             }
         }
 
+        let timeout = Duration::from_secs(120);
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
         let mut buf = [0u8; 4096];
 
         loop {
             let mut read_anything = false;
+
             match ch.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) => {
+                    // 非阻塞模式下返回 0 不能提前退出，需结合 EOF 判定
+                }
                 Ok(n) => {
                     stdout_buf.extend_from_slice(&buf[..n]);
                     read_anything = true;
@@ -374,18 +374,53 @@ impl SshManager {
                 Err(_) => {}
             }
 
-            if !read_anything {
-                if ch.eof() {
-                    break;
+            if ch.eof() {
+                // 远程已发送 EOF，将通道残余数据彻底排空
+                loop {
+                    let mut drained = false;
+                    match ch.read(&mut buf) {
+                        Ok(n) if n > 0 => {
+                            stdout_buf.extend_from_slice(&buf[..n]);
+                            drained = true;
+                        }
+                        _ => {}
+                    }
+                    match ch.stderr().read(&mut buf) {
+                        Ok(n) if n > 0 => {
+                            stderr_buf.extend_from_slice(&buf[..n]);
+                            drained = true;
+                        }
+                        _ => {}
+                    }
+                    if !drained {
+                        break;
+                    }
                 }
-                if start_time.elapsed() > Duration::from_secs(30) {
-                    return Err("命令执行超时 (30s)".to_string());
+                break;
+            }
+
+            if !read_anything {
+                if start_time.elapsed() > timeout {
+                    return Err(format!("命令执行超时 ({}s)", timeout.as_secs()));
                 }
                 thread::sleep(Duration::from_millis(10));
             }
         }
 
-        let _ = ch.wait_close();
+        let close_start = std::time::Instant::now();
+        loop {
+            match ch.wait_close() {
+                Ok(()) => break,
+                Err(e) if e.code() == ssh2::ErrorCode::Session(-37) => {
+                    if close_start.elapsed() > Duration::from_secs(5) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+
         let exit_code = ch.exit_status().unwrap_or(0);
 
         Ok(SshExecResult {

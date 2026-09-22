@@ -293,13 +293,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setSidebarWidth: (width: number) => {
-    const clamped = Math.max(160, Math.min(480, width));
+    const maxWidth = typeof window !== 'undefined' ? Math.max(480, Math.min(640, window.innerWidth - 400)) : 480;
+    const clamped = Math.max(160, Math.min(maxWidth, width));
     set({ sidebarWidth: clamped });
     localStorage.setItem('tini_terminal_sidebar_width', String(clamped));
   },
 
   setAiPanelWidth: (width: number) => {
-    const clamped = Math.max(260, Math.min(640, width));
+    const maxWidth = typeof window !== 'undefined' ? Math.max(640, window.innerWidth - 300) : 1800;
+    const clamped = Math.max(260, Math.min(maxWidth, width));
     set({ aiPanelWidth: clamped });
     localStorage.setItem('tini_terminal_ai_width', String(clamped));
   },

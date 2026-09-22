@@ -136,6 +136,30 @@ export function abortAgentTask(): void {
   });
 }
 
+function isReadOnlyCommand(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  if (!trimmed) return true;
+  // 严禁包含写入重定向或写管道
+  if (/>|>>|\|\s*(tee|dd)\b/i.test(trimmed)) return false;
+  // 匹配状态修改与变更命令
+  const modifyingKeywords = [
+    'rm', 'mv', 'cp', 'chmod', 'chown', 'mkdir', 'rmdir', 'touch', 'truncate',
+    'sed -i', 'apt', 'yum', 'dnf', 'pacman', 'apk', 'pip', 'npm', 'yarn', 'pnpm',
+    'docker run', 'docker rm', 'docker stop', 'docker start', 'docker restart', 'docker compose', 'docker build',
+    'systemctl start', 'systemctl stop', 'systemctl restart', 'systemctl enable', 'systemctl disable',
+    'service', 'kill', 'pkill', 'killall', 'reboot', 'shutdown', 'poweroff', 'mkfs', 'fdisk', 'dd',
+    'git commit', 'git push', 'git checkout', 'git reset', 'git clean',
+  ];
+  const lower = trimmed.toLowerCase();
+  for (const kw of modifyingKeywords) {
+    const regex = new RegExp(`(^|[;&|\\s])${kw}(\\s|[;&|]|$)`, 'i');
+    if (regex.test(lower)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function runAgentTask(userPrompt: string): Promise<void> {
   if (currentAbortController) {
     abortAgentTask();
@@ -152,7 +176,10 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
   const activeTab = terminalStore.tabs.find((t) => t.id === terminalStore.activeTabId);
   const sessionId = activeTab?.sessionId || 'local-session';
 
-  // 1. 添加用户消息
+  // 1. 获取现有历史消息（最多保留最近 20 条）
+  const historyMessages = agentStore.messages.slice(-20);
+
+  // 2. 添加用户消息到 store
   const userMsgId = 'msg-' + Date.now();
   agentStore.addMessage({
     id: userMsgId,
@@ -163,29 +190,66 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
 
   agentStore.setIsThinking(true);
 
-  // 2. 准备系统提示词与历史记录
-  const systemPrompt = `你是一个专业的 Linux 运维 AI Agent 助手。
-你的目标是根据用户的指令，自主分析问题、制订排错或运维计划，并调用提供的工具完成操作。
+  // 3. 准备系统提示词与历史记录
+  const systemPrompt = `你是一个具备完整工具调用执行能力的专业 Linux 运维与 SRE Agent 助手。
 系统当前连接主机: ${activeTab ? `${activeTab.title} (Session: ${activeTab.sessionId})` : '本地终端'}
-执行原则:
-1. 先查看现状（如端口、进程、系统状态），不要盲目执行破坏性变更。
-2. 每次工具调用前简明阐述目的，执行后根据结果继续下一步，直至达成用户目标。
-3. 界面文案保持精炼专业，杜绝无意义冗长寒暄。
-4. 严禁输出任何 Emoji。`;
+
+核心原则与执行纪律:
+1. 真实工具调用，严禁口头伪造执行:
+   - 严禁在回复中以文本口头宣称"正在检查..."、"正在编写脚本..."、"服务已部署完成"而实际不调用工具！
+   - 所有环境探测、状态排查、服务启动等必须通过 terminal_exec、file_read、file_list、system_info 工具实际调用。
+   - 所有运维脚本、配置文件的创建或更新必须通过 file_write 工具实际写入目标路径，严禁仅在回复文本中展示脚本代码就假装已经部署。
+2. 脚本编写与执行规范:
+   - 严禁在 terminal_exec 中使用超长多行文本或复杂 heredoc (cat << 'EOF') 拼装脚本，这极易引发转义与语法错误。
+   - 正确流程: 优先使用 file_write 将完整脚本写入目标绝对路径 (如 /usr/local/bin/xxx 或项目目录)，随后使用 terminal_exec 执行 chmod +x 并运行。
+3. 闭环验证原则:
+   - 任何部署、重启或变更操作完成后，必须主动调用 terminal_exec 进行状态闭环验证 (如检查 docker ps、ss -lntp、systemctl status、curl 探测等)，确保真实生效后才向用户确认。
+4. 极致简洁专业:
+   - 交互文案直观精炼、直奔主题，杜绝解释性套话、过程性废话和无意义寒暄。
+   - 严禁输出任何 Emoji 表情符号。`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
   ];
 
-  // 导入最近历史消息
-  for (const m of agentStore.messages) {
-    if (m.role === 'user' || m.role === 'assistant') {
-      conversation.push({
-        role: m.role,
-        content: m.content || '',
-      });
+  // 导入最近历史消息（完整保留 tool_calls 与 tool 返回结果，避免多轮丢失工具状态）
+  for (const m of historyMessages) {
+    if (m.role === 'user') {
+      if (m.content) {
+        conversation.push({ role: 'user', content: m.content });
+      }
+    } else if (m.role === 'assistant') {
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        const validCalls = m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.name,
+            arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || {}),
+          },
+        }));
+        conversation.push({
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: validCalls,
+        });
+        for (const tc of m.toolCalls) {
+          conversation.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: tc.result || (tc.status === 'rejected' ? '用户拒绝执行' : '(无输出)'),
+          });
+        }
+      } else if (m.content && m.content.trim()) {
+        conversation.push({
+          role: 'assistant',
+          content: m.content,
+        });
+      }
     }
   }
+
+  // 追加当前用户提示词
   conversation.push({ role: 'user', content: userPrompt });
 
   const aiSettings = settingsStore.settings;
@@ -212,7 +276,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
     toolCalls: toolCallItems,
   });
 
-  const maxLoops = 8;
+  const maxLoops = 15;
   let loopCount = 0;
 
   let accumulatedThinking = '';
@@ -445,28 +509,51 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
         let allowed = true;
 
         if (permMode === 'read_only') {
-          if (fnName === 'terminal_exec' || fnName === 'file_write') {
+          if (fnName === 'file_write') {
             allowed = false;
             toolCallItem.status = 'rejected';
             toolCallItem.result = '拒绝执行：当前处于只读权限模式';
-          }
-        } else if (permMode === 'ask' || toolCallItem.riskLevel === 'dangerous') {
-          // 挂起等待用户确认
-          toolCallItem.status = 'pending';
-          agentStore.updateLastMessage((m) => ({
-            ...m,
-            toolCalls: [...toolCallItems],
-          }));
-
-          allowed = await new Promise<boolean>((resolve) => {
-            agentStore.setPendingApproval(toolCallItem, resolve);
-          });
-
-          if (signal.aborted) break;
-
-          if (!allowed) {
+          } else if (fnName === 'terminal_exec' && !isReadOnlyCommand(fnArgs.command || '')) {
+            allowed = false;
             toolCallItem.status = 'rejected';
-            toolCallItem.result = '用户取消了本次工具执行';
+            toolCallItem.result = '拒绝执行：当前处于只读权限模式，不可执行状态修改指令';
+          }
+        } else {
+          let needsApproval = false;
+
+          if (toolCallItem.riskLevel === 'dangerous') {
+            needsApproval = true;
+          } else if (permMode === 'full') {
+            needsApproval = false;
+          } else {
+            // 需确认模式 (ask)：写操作与高风险命令需人工确认，只读探测自主放行
+            if (fnName === 'file_write') {
+              needsApproval = true;
+            } else if (fnName === 'terminal_exec') {
+              if (toolCallItem.riskLevel === 'warning' || !isReadOnlyCommand(fnArgs.command || '')) {
+                needsApproval = true;
+              }
+            }
+          }
+
+          if (needsApproval) {
+            // 挂起等待用户确认
+            toolCallItem.status = 'pending';
+            agentStore.updateLastMessage((m) => ({
+              ...m,
+              toolCalls: [...toolCallItems],
+            }));
+
+            allowed = await new Promise<boolean>((resolve) => {
+              agentStore.setPendingApproval(toolCallItem, resolve);
+            });
+
+            if (signal.aborted) break;
+
+            if (!allowed) {
+              toolCallItem.status = 'rejected';
+              toolCallItem.result = '用户取消了本次工具执行';
+            }
           }
         }
 

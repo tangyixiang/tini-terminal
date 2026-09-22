@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { ServerSidebar } from './components/servers/ServerSidebar';
 import { XTerminal } from './components/terminal/XTerminal';
@@ -40,20 +40,26 @@ export const App: React.FC = () => {
     fetchSettings();
   }, []);
 
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+
   // 左侧主机栏拖拽调整宽度
   const handleLeftResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = sidebarWidth;
+    setIsResizingLeft(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(160, Math.min(480, startWidth + (moveEvent.clientX - startX)));
+      const maxWidth = Math.max(360, Math.min(600, window.innerWidth - 400));
+      const newWidth = Math.max(160, Math.min(maxWidth, startWidth + (moveEvent.clientX - startX)));
       setSidebarWidth(newWidth);
     };
 
     const onMouseUp = () => {
+      setIsResizingLeft(false);
       document.body.style.cursor = 'default';
       document.body.style.userSelect = 'auto';
       window.removeEventListener('mousemove', onMouseMove);
@@ -64,20 +70,24 @@ export const App: React.FC = () => {
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  // 右侧 AI 运维面板拖拽调整宽度
+  // 右侧 AI 运维面板自由左右拖拽调整宽度
   const handleRightResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = aiPanelWidth;
+    setIsResizingRight(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(260, Math.min(640, startWidth - (moveEvent.clientX - startX)));
+      // 允许自由拖拽宽度，仅保留左侧最小终端与面板工作区
+      const maxWidth = Math.max(640, window.innerWidth - 300);
+      const newWidth = Math.max(260, Math.min(maxWidth, startWidth - (moveEvent.clientX - startX)));
       setAiPanelWidth(newWidth);
     };
 
     const onMouseUp = () => {
+      setIsResizingRight(false);
       document.body.style.cursor = 'default';
       document.body.style.userSelect = 'auto';
       window.removeEventListener('mousemove', onMouseMove);
@@ -86,6 +96,16 @@ export const App: React.FC = () => {
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // 双击手柄在紧凑宽度与宽屏模式间快速切换
+  const handleRightDoubleClick = () => {
+    if (aiPanelWidth > 500) {
+      setAiPanelWidth(360);
+    } else {
+      const wideWidth = Math.min(Math.round(window.innerWidth * 0.48), window.innerWidth - 320);
+      setAiPanelWidth(Math.max(600, wideWidth));
+    }
   };
 
   return (
@@ -107,7 +127,7 @@ export const App: React.FC = () => {
         {/* 左侧拖拽调整宽度手柄 */}
         {isServerSidebarOpen && (
           <div
-            className="resize-handle-x"
+            className={`resize-handle-x ${isResizingLeft ? 'resizing' : ''}`}
             onMouseDown={handleLeftResize}
             title="按住左右拖拽调整主机列表宽度"
           />
@@ -186,14 +206,20 @@ export const App: React.FC = () => {
         {/* 右侧拖拽调整宽度手柄 */}
         {isAiPanelOpen && (
           <div
-            className="resize-handle-x"
+            className={`resize-handle-x ${isResizingRight ? 'resizing' : ''}`}
             onMouseDown={handleRightResize}
-            title="按住左右拖拽调整 AI 运维面板宽度"
+            onDoubleClick={handleRightDoubleClick}
+            title="按住左右拖拽调整宽度，双击快速切换宽屏/紧凑模式"
           />
         )}
 
         {/* 右侧：AI 智能体工作面板 */}
         {isAiPanelOpen && <AgentPanel />}
+
+        {/* 全局拖拽事件捕获遮罩层，杜绝终端捕获或文字选中干扰 */}
+        {(isResizingLeft || isResizingRight) && (
+          <div className="fixed inset-0 z-50 cursor-col-resize select-none pointer-events-auto" />
+        )}
       </main>
 
       {/* 底部状态栏 */}
