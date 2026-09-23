@@ -317,7 +317,7 @@ export const TitleBar: React.FC = () => {
             backgroundColor: isAiPanelOpen
               ? '#23d18b'
               : currentTheme.ui.hoverBg,
-            color: isAiPanelOpen ? '#000000' : currentTheme.ui.text,
+            color: isAiPanelOpen ? '#064e3b' : currentTheme.ui.text,
           }}
         >
           <Sparkles className="w-3.5 h-3.5" />

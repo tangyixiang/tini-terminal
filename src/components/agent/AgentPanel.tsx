@@ -676,7 +676,7 @@ export const AgentPanel: React.FC = () => {
                 className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
                 style={{
                   backgroundColor: '#23d18b',
-                  color: '#000000',
+                  color: '#064e3b',
                   fontSize: `${subFontSize}px`,
                 }}
               >

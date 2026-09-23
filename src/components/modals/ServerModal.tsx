@@ -285,7 +285,7 @@ export const ServerModal: React.FC = () => {
           <button
             onClick={handleSave}
             className="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer text-black hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: '#23d18b', color: '#000000' }}
+            style={{ backgroundColor: '#23d18b', color: '#064e3b' }}
           >
             保存配置
           </button>

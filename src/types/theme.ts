@@ -4,7 +4,7 @@ export type ThemeId = 'aliyun' | 'vscode' | 'github_dark' | 'github_light' | 'on
 
 export const PRIMARY_BUTTON_STYLE = {
   backgroundColor: '#23d18b',
-  color: '#000000',
+  color: '#064e3b',
 } as const;
 
 export interface ThemeConfig {
