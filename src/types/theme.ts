@@ -2,6 +2,11 @@ import type { ITheme } from '@xterm/xterm';
 
 export type ThemeId = 'aliyun' | 'vscode' | 'github_dark' | 'github_light' | 'one_dark';
 
+export const PRIMARY_BUTTON_STYLE = {
+  backgroundColor: '#23d18b',
+  color: '#000000',
+} as const;
+
 export interface ThemeConfig {
   id: ThemeId;
   name: string;

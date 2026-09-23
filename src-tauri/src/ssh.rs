@@ -31,6 +31,12 @@ pub struct SshExecResult {
     pub duration_ms: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExecStreamPayload {
+    pub stream: String,
+    pub data: String,
+}
+
 pub struct SshSessionHandle {
     pub channel: Arc<Mutex<SshChannel>>,
     pub session: Arc<Mutex<Session>>,
@@ -313,6 +319,7 @@ impl SshManager {
         &self,
         session_id: &str,
         command: &str,
+        channel: Option<Channel<ExecStreamPayload>>,
     ) -> Result<SshExecResult, String> {
         // 复用独立的辅助通道连接，彻底与交互式终端的 PTY 线程解耦，避免套接字竞争
         let session_arc = self.get_or_create_sftp_session(session_id)?;
@@ -357,7 +364,14 @@ impl SshManager {
                     // 非阻塞模式下返回 0 不能提前退出，需结合 EOF 判定
                 }
                 Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     stdout_buf.extend_from_slice(&buf[..n]);
+                    if let Some(ref ch_ipc) = channel {
+                        let _ = ch_ipc.send(ExecStreamPayload {
+                            stream: "stdout".to_string(),
+                            data: chunk,
+                        });
+                    }
                     read_anything = true;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -367,7 +381,14 @@ impl SshManager {
             match ch.stderr().read(&mut buf) {
                 Ok(0) => {}
                 Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     stderr_buf.extend_from_slice(&buf[..n]);
+                    if let Some(ref ch_ipc) = channel {
+                        let _ = ch_ipc.send(ExecStreamPayload {
+                            stream: "stderr".to_string(),
+                            data: chunk,
+                        });
+                    }
                     read_anything = true;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -380,14 +401,28 @@ impl SshManager {
                     let mut drained = false;
                     match ch.read(&mut buf) {
                         Ok(n) if n > 0 => {
+                            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                             stdout_buf.extend_from_slice(&buf[..n]);
+                            if let Some(ref ch_ipc) = channel {
+                                let _ = ch_ipc.send(ExecStreamPayload {
+                                    stream: "stdout".to_string(),
+                                    data: chunk,
+                                });
+                            }
                             drained = true;
                         }
                         _ => {}
                     }
                     match ch.stderr().read(&mut buf) {
                         Ok(n) if n > 0 => {
+                            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                             stderr_buf.extend_from_slice(&buf[..n]);
+                            if let Some(ref ch_ipc) = channel {
+                                let _ = ch_ipc.send(ExecStreamPayload {
+                                    stream: "stderr".to_string(),
+                                    data: chunk,
+                                });
+                            }
                             drained = true;
                         }
                         _ => {}

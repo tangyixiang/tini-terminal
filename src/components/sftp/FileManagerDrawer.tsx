@@ -746,8 +746,8 @@ export const FileManagerDrawer: React.FC = () => {
                 <button
                   onClick={handleSaveFile}
                   disabled={saving}
-                  className="px-2.5 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer text-black"
-                  style={{ backgroundColor: currentTheme.ui.accent }}
+                  className="px-2.5 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer text-black hover:opacity-90"
+                  style={{ backgroundColor: '#23d18b', color: '#000000' }}
                 >
                   {saving ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -1062,7 +1062,7 @@ export const FileManagerDrawer: React.FC = () => {
                     ? 'bg-red-500 hover:bg-red-600 text-white'
                     : 'text-black'
                 }`}
-                style={activeDialog !== 'delete' ? { backgroundColor: currentTheme.ui.accent } : undefined}
+                style={activeDialog !== 'delete' ? { backgroundColor: '#23d18b', color: '#000000' } : undefined}
               >
                 {activeDialog === 'delete' ? '确认删除' : '确定'}
               </button>

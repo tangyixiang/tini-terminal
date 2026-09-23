@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import type { SafetyCheckResult, SftpListResult } from '../../types';
 
@@ -93,10 +93,14 @@ export const AGENT_TOOLS = [
 export async function executeToolCall(
   sessionId: string,
   toolName: string,
-  args: Record<string, any>
+  args: Record<string, any>,
+  onStream?: (chunk: string) => void
 ): Promise<{ stdout: string; isError?: boolean }> {
   if (!window.__TAURI_INTERNALS__) {
     // 浏览器环境回退
+    if (onStream) {
+      onStream(`[本地模拟] 执行工具 ${toolName}...\n`);
+    }
     return {
       stdout: `[开发环境测试] 执行工具 ${toolName}，参数: ${JSON.stringify(args)}`,
     };
@@ -109,6 +113,14 @@ export async function executeToolCall(
         const tabs = useTerminalStore.getState().tabs;
         const currentTab = tabs.find((t) => t.sessionId === sessionId || t.id === sessionId);
         const isLocal = currentTab ? !currentTab.isSsh : (!sessionId || sessionId.startsWith('local'));
+
+        const channel = new Channel<{ stream: string; data: string }>();
+        channel.onmessage = (payload) => {
+          if (onStream && payload?.data) {
+            onStream(payload.data);
+          }
+        };
+
         const res = isLocal
           ? await invoke<{
               exit_code: number;
@@ -117,6 +129,7 @@ export async function executeToolCall(
               duration_ms: number;
             }>('exec_local_command', {
               command: cmd,
+              channel,
             })
           : await invoke<{
               exit_code: number;
@@ -126,13 +139,14 @@ export async function executeToolCall(
             }>('ssh_exec_command', {
               sessionId,
               command: cmd,
+              channel,
             });
 
         if (res.exit_code === 0) {
           return { stdout: res.stdout || '(命令执行成功，无额外输出)' };
         } else {
           return {
-            stdout: `退出码 ${res.exit_code}\n标准输出: ${res.stdout}\n错误输出: ${res.stderr}`,
+            stdout: `退出码 ${res.exit_code}\n${res.stdout ? `标准输出:\n${res.stdout}\n` : ''}${res.stderr ? `错误输出:\n${res.stderr}` : ''}`,
             isError: true,
           };
         }

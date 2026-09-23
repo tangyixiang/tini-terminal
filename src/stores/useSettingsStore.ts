@@ -235,10 +235,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setThemeId: async (id: ThemeId) => {
-    if (!BUILTIN_THEMES[id]) return;
+    const targetTheme = BUILTIN_THEMES[id];
+    if (!targetTheme) return;
     set({ themeId: id });
     try {
       if (window.__TAURI_INTERNALS__) {
+        invoke('set_window_theme', { isDark: targetTheme.isDark }).catch(() => {});
         await invoke('save_settings', {
           settings: {
             ...get().settings,

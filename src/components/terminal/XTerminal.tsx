@@ -122,6 +122,33 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       flushInputQueue();
     });
 
+    // 快捷键拦截：Windows/Linux 下 Shift + Ctrl + C 复制选区，Shift + Ctrl + V 粘贴剪贴板
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type === 'keydown') {
+        const isCtrl = event.ctrlKey || event.metaKey;
+        if (event.shiftKey && isCtrl) {
+          const keyLower = event.key.toLowerCase();
+          if (event.code === 'KeyC' || keyLower === 'c') {
+            const selection = term.getSelection();
+            if (selection) {
+              navigator.clipboard.writeText(selection).catch(() => {});
+            }
+            return false;
+          }
+          if (event.code === 'KeyV' || keyLower === 'v') {
+            navigator.clipboard.readText().then((text) => {
+              if (text) {
+                inputQueue.push(text);
+                flushInputQueue();
+              }
+            }).catch(() => {});
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+
     // 3. 建立会话流式通道
     const setupConnection = async () => {
       if (!window.__TAURI_INTERNALS__) {

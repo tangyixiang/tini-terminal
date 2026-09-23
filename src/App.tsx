@@ -11,7 +11,8 @@ import { FileManagerDrawer } from './components/sftp/FileManagerDrawer';
 import { useServerStore } from './stores/useServerStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useTerminalStore } from './stores/useTerminalStore';
-import { BUILTIN_THEMES } from './types/theme';
+import { invoke } from '@tauri-apps/api/core';
+import { BUILTIN_THEMES, PRIMARY_BUTTON_STYLE } from './types/theme';
 import { Terminal, Plus } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -39,6 +40,13 @@ export const App: React.FC = () => {
     fetchServers();
     fetchSettings();
   }, []);
+
+  // 动态同步原生系统窗口主题（暗色/浅色模式）
+  useEffect(() => {
+    if (window.__TAURI_INTERNALS__) {
+      invoke('set_window_theme', { isDark: currentTheme.isDark }).catch(() => {});
+    }
+  }, [themeId, currentTheme.isDark]);
 
   const [isResizingLeft, setIsResizingLeft] = useState(false);
   const [isResizingRight, setIsResizingRight] = useState(false);
@@ -172,8 +180,8 @@ export const App: React.FC = () => {
                 </button>
                 <button
                   onClick={() => toggleServerModal(true)}
-                  className="px-3 py-1.5 rounded text-white text-xs cursor-pointer font-medium transition-colors"
-                  style={{ backgroundColor: currentTheme.ui.accent }}
+                  className="px-3 py-1.5 rounded text-xs cursor-pointer font-semibold transition-opacity hover:opacity-90"
+                  style={PRIMARY_BUTTON_STYLE}
                 >
                   添加远程主机
                 </button>

@@ -754,7 +754,7 @@ export const SettingsModal: React.FC = () => {
           <button
             onClick={handleSave}
             className="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer text-black hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: currentTheme.ui.accent }}
+            style={{ backgroundColor: '#23d18b', color: '#000000' }}
           >
             保存配置
           </button>

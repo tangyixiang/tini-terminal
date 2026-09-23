@@ -22,8 +22,7 @@
         "fullscreen": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "acceptFirstMouse": true,
-        "theme": "Dark"
+        "acceptFirstMouse": true
       }
     ],
     "security": {

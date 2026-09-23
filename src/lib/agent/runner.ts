@@ -561,13 +561,22 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
 
         if (allowed) {
           toolCallItem.status = 'executing';
+          toolCallItem.result = '';
           agentStore.updateLastMessage((m) => ({
             ...m,
             toolCalls: [...toolCallItems],
           }));
 
           const startTime = Date.now();
-          const execRes = await executeToolCall(sessionId, fnName, fnArgs);
+          const execRes = await executeToolCall(sessionId, fnName, fnArgs, (chunk: string) => {
+            if (signal.aborted) return;
+            toolCallItem.result = (toolCallItem.result || '') + chunk;
+            toolCallItem.durationMs = Date.now() - startTime;
+            agentStore.updateLastMessage((m) => ({
+              ...m,
+              toolCalls: [...toolCallItems],
+            }));
+          });
           if (signal.aborted) break;
 
           toolCallItem.durationMs = Date.now() - startTime;

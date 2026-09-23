@@ -9,7 +9,7 @@ use agent::{AgentService, AiStreamEvent, StreamAiChatRequest, TestAiRequest, Tes
 use pty::{PtyManager, TerminalOutputPayload};
 use safety::{SafetyCheckResult, SafetyManager};
 use sftp::{SftpListResult, SftpManager};
-use ssh::{SshConnectOptions, SshExecResult, SshManager};
+use ssh::{ExecStreamPayload, SshConnectOptions, SshExecResult, SshManager};
 use storage::{ServerRecord, StorageManager};
 
 use std::collections::HashMap;
@@ -134,33 +134,91 @@ async fn ssh_exec_command(
     state: State<'_, Arc<AppState>>,
     session_id: String,
     command: String,
+    channel: Channel<ExecStreamPayload>,
 ) -> Result<SshExecResult, String> {
     let ssh = state.ssh.clone();
     tokio::task::spawn_blocking(move || {
-        ssh.exec_command(&session_id, &command)
+        ssh.exec_command(&session_id, &command, Some(channel))
     })
     .await
     .map_err(|e| format!("执行远程命令任务失败: {}", e))?
 }
 
 #[tauri::command]
-async fn exec_local_command(command: String) -> Result<SshExecResult, String> {
+async fn exec_local_command(
+    command: String,
+    channel: Channel<ExecStreamPayload>,
+) -> Result<SshExecResult, String> {
     tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+
         let start = std::time::Instant::now();
         let (shell, flag) = if cfg!(target_os = "windows") {
             ("powershell", "-Command")
         } else {
             ("sh", "-c")
         };
-        let output = std::process::Command::new(shell)
+
+        let mut child = Command::new(shell)
             .arg(flag)
             .arg(&command)
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| format!("执行本地命令失败: {}", e))?;
+
+        let stdout_handle = child.stdout.take();
+        let stderr_handle = child.stderr.take();
+
+        let channel_out = channel.clone();
+        let t_out = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            if let Some(mut stream) = stdout_handle {
+                let mut buf = [0u8; 2048];
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                    out.extend_from_slice(&buf[..n]);
+                    let _ = channel_out.send(ExecStreamPayload {
+                        stream: "stdout".to_string(),
+                        data: chunk,
+                    });
+                }
+            }
+            out
+        });
+
+        let channel_err = channel.clone();
+        let t_err = std::thread::spawn(move || {
+            let mut err = Vec::new();
+            if let Some(mut stream) = stderr_handle {
+                let mut buf = [0u8; 2048];
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                    err.extend_from_slice(&buf[..n]);
+                    let _ = channel_err.send(ExecStreamPayload {
+                        stream: "stderr".to_string(),
+                        data: chunk,
+                    });
+                }
+            }
+            err
+        });
+
+        let status = child.wait().map_err(|e| format!("等待子进程退出失败: {}", e))?;
+        let stdout_data = t_out.join().unwrap_or_default();
+        let stderr_data = t_err.join().unwrap_or_default();
+
         Ok(SshExecResult {
-            exit_code: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&stdout_data).to_string(),
+            stderr: String::from_utf8_lossy(&stderr_data).to_string(),
             duration_ms: start.elapsed().as_millis() as u64,
         })
     })
@@ -396,6 +454,16 @@ fn toggle_maximize_window(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_window_theme(window: tauri::Window, is_dark: bool) -> Result<(), String> {
+    let theme = if is_dark {
+        Some(tauri::Theme::Dark)
+    } else {
+        Some(tauri::Theme::Light)
+    };
+    window.set_theme(theme).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn test_ai_connection(req: TestAiRequest) -> TestAiResponse {
     AgentService::test_connection(req).await
 }
@@ -468,7 +536,8 @@ pub fn run() {
             abort_ai_chat,
             log_debug,
             drag_window,
-            toggle_maximize_window
+            toggle_maximize_window,
+            set_window_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

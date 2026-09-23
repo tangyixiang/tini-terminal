@@ -23,6 +23,7 @@ import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { runAgentTask, abortAgentTask } from '../../lib/agent/runner';
 import { BUILTIN_THEMES } from '../../types/theme';
+import { MiniTerminalConsole } from './MiniTerminalConsole';
 import type { ToolCallItem } from '../../types';
 import { MarkdownView } from './MarkdownView';
 
@@ -457,45 +458,60 @@ export const AgentPanel: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* 执行参数 */}
-                        <div
-                          className="mt-1 font-terminal px-2 py-1 rounded border break-all"
-                          style={{
-                            backgroundColor: currentTheme.ui.inputBg,
-                            borderColor: currentTheme.ui.border,
-                            color: currentTheme.ui.text,
-                            fontSize: `${codeFontSize}px`,
-                          }}
-                        >
-                          {tc.name === 'terminal_exec'
-                            ? tc.args.command
-                            : JSON.stringify(tc.args)}
-                        </div>
+                        {/* 如果是 terminal_exec 并且处于执行中或已有输出/执行完毕，呈现微型实时终端控制台 */}
+                        {tc.name === 'terminal_exec' &&
+                        (tc.status === 'executing' ||
+                          tc.status === 'success' ||
+                          tc.status === 'failed' ||
+                          tc.result !== undefined) ? (
+                          <MiniTerminalConsole
+                            toolCall={tc}
+                            theme={currentTheme}
+                            fontSize={codeFontSize}
+                          />
+                        ) : (
+                          <>
+                            {/* 执行参数 */}
+                            <div
+                              className="mt-1 font-terminal px-2 py-1 rounded border break-all"
+                              style={{
+                                backgroundColor: currentTheme.ui.inputBg,
+                                borderColor: currentTheme.ui.border,
+                                color: currentTheme.ui.text,
+                                fontSize: `${codeFontSize}px`,
+                              }}
+                            >
+                              {tc.name === 'terminal_exec'
+                                ? tc.args.command
+                                : JSON.stringify(tc.args)}
+                            </div>
 
-                        {/* 危险警告 */}
-                        {tc.warningMessage && (
-                          <div
-                            className="mt-1.5 text-amber-500 flex items-center gap-1"
-                            style={{ fontSize: `${smallFontSize}px` }}
-                          >
-                            <ShieldAlert className="w-3 h-3 shrink-0" />
-                            <span>{tc.warningMessage}</span>
-                          </div>
-                        )}
+                            {/* 危险警告 */}
+                            {tc.warningMessage && (
+                              <div
+                                className="mt-1.5 text-amber-500 flex items-center gap-1"
+                                style={{ fontSize: `${smallFontSize}px` }}
+                              >
+                                <ShieldAlert className="w-3 h-3 shrink-0" />
+                                <span>{tc.warningMessage}</span>
+                              </div>
+                            )}
 
-                        {/* 输出结果 */}
-                        {tc.result && (
-                          <div
-                            className="mt-1.5 font-terminal p-1.5 rounded max-h-36 overflow-y-auto whitespace-pre-wrap border"
-                            style={{
-                              backgroundColor: currentTheme.ui.inputBg,
-                              borderColor: currentTheme.ui.border,
-                              color: currentTheme.ui.textMuted,
-                              fontSize: `${codeFontSize}px`,
-                            }}
-                          >
-                            {tc.result}
-                          </div>
+                            {/* 输出结果 */}
+                            {tc.result && (
+                              <div
+                                className="mt-1.5 font-terminal p-1.5 rounded max-h-36 overflow-y-auto whitespace-pre-wrap border"
+                                style={{
+                                  backgroundColor: currentTheme.ui.inputBg,
+                                  borderColor: currentTheme.ui.border,
+                                  color: currentTheme.ui.textMuted,
+                                  fontSize: `${codeFontSize}px`,
+                                }}
+                              >
+                                {tc.result}
+                              </div>
+                            )}
+                          </>
                         )}
 
                         {/* 单步审批操作按钮 */}
@@ -657,9 +673,10 @@ export const AgentPanel: React.FC = () => {
               <button
                 onClick={handleSend}
                 disabled={!input.trim()}
-                className="px-3 py-1 disabled:opacity-50 text-white rounded font-medium cursor-pointer flex items-center gap-1 transition-colors"
+                className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
                 style={{
-                  backgroundColor: currentTheme.ui.accent,
+                  backgroundColor: '#23d18b',
+                  color: '#000000',
                   fontSize: `${subFontSize}px`,
                 }}
               >

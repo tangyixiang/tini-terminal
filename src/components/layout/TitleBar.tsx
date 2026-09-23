@@ -312,12 +312,12 @@ export const TitleBar: React.FC = () => {
 
         <button
           onClick={() => toggleAiPanel()}
-          className="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-medium cursor-pointer transition-colors"
+          className="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-semibold cursor-pointer transition-colors"
           style={{
             backgroundColor: isAiPanelOpen
-              ? currentTheme.ui.accent
+              ? '#23d18b'
               : currentTheme.ui.hoverBg,
-            color: isAiPanelOpen ? '#ffffff' : currentTheme.ui.text,
+            color: isAiPanelOpen ? '#000000' : currentTheme.ui.text,
           }}
         >
           <Sparkles className="w-3.5 h-3.5" />
