@@ -3,11 +3,96 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Terminal 原型预览</title>
+  <title>TINI TERMINAL 原型预览</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
     
+    :root {
+      --app-bg: #121212;
+      --header-bg: #181818;
+      --sidebar-bg: #141414;
+      --terminal-bg: #171717;
+      --agent-bg: #161616;
+      --card-bg: #1c1c1c;
+      --border-color: #2a2a2a;
+      --text-color: #f2f2f2;
+      --text-muted: #8f8f8f;
+      --accent-color: #23d18b;
+      --active-tab-bg: #1f1f1f;
+      --hover-bg: rgba(255, 255, 255, 0.06);
+      --input-bg: #1c1c1c;
+      --term-font-size: 14px;
+    }
+
+    /* VS Code Dark+ */
+    body.theme-vscode {
+      --app-bg: #181818;
+      --header-bg: #1f1f1f;
+      --sidebar-bg: #181818;
+      --terminal-bg: #1e1e1e;
+      --agent-bg: #1e1e1e;
+      --card-bg: #252526;
+      --border-color: #333333;
+      --text-color: #cccccc;
+      --text-muted: #858585;
+      --accent-color: #0078d4;
+      --active-tab-bg: #1e1e1e;
+      --hover-bg: #2a2d2e;
+      --input-bg: #3c3c3c;
+    }
+
+    /* GitHub Dark */
+    body.theme-github_dark {
+      --app-bg: #010409;
+      --header-bg: #0d1117;
+      --sidebar-bg: #0d1117;
+      --terminal-bg: #0d1117;
+      --agent-bg: #0d1117;
+      --card-bg: #161b22;
+      --border-color: #30363d;
+      --text-color: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent-color: #2f81f7;
+      --active-tab-bg: #161b22;
+      --hover-bg: #21262d;
+      --input-bg: #161b22;
+    }
+
+    /* GitHub Light */
+    body.theme-github_light {
+      --app-bg: #f6f8fa;
+      --header-bg: #f6f8fa;
+      --sidebar-bg: #f6f8fa;
+      --terminal-bg: #ffffff;
+      --agent-bg: #ffffff;
+      --card-bg: #f6f8fa;
+      --border-color: #d0d7de;
+      --text-color: #24292f;
+      --text-muted: #57606a;
+      --accent-color: #0969da;
+      --active-tab-bg: #ffffff;
+      --hover-bg: #eaeef2;
+      --input-bg: #ffffff;
+    }
+
+    /* One Dark Pro */
+    body.theme-one_dark {
+      --app-bg: #21252b;
+      --header-bg: #21252b;
+      --sidebar-bg: #21252b;
+      --terminal-bg: #282c34;
+      --agent-bg: #282c34;
+      --card-bg: #2c313a;
+      --border-color: #3e4451;
+      --text-color: #abb2bf;
+      --text-muted: #5c6370;
+      --accent-color: #61afef;
+      --active-tab-bg: #282c34;
+      --hover-bg: #2c313a;
+      --input-bg: #1e2227;
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
@@ -17,8 +102,8 @@
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background-color: #0c0d0e;
-      color: #d4d4d8;
+      background-color: var(--app-bg);
+      color: var(--text-color);
       overflow: hidden;
       height: 100vh;
       width: 100vw;
@@ -38,11 +123,11 @@
       background: transparent;
     }
     ::-webkit-scrollbar-thumb {
-      background: #27272a;
+      background: rgba(120, 120, 120, 0.25);
       border-radius: 3px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: #3f3f46;
+      background: rgba(120, 120, 120, 0.4);
     }
 
     .cursor-blink {
@@ -52,416 +137,1142 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0; }
     }
+
+    .resize-handle-x {
+      width: 4px;
+      cursor: col-resize;
+      background-color: transparent;
+      transition: background-color 0.15s;
+      z-index: 20;
+    }
+    .resize-handle-x:hover, .resize-handle-x.resizing {
+      background-color: var(--accent-color);
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
   </style>
 </head>
-<body class="flex flex-col h-screen bg-[#090a0f] text-zinc-300 antialiased select-none">
+<body class="flex flex-col h-screen antialiased select-none transition-colors duration-200" style="background-color: var(--app-bg); color: var(--text-color);">
 
-  <!-- 顶部标题栏 / 标签栏 -->
-  <header class="h-10 bg-[#12131a] border-b border-zinc-800 flex items-center justify-between px-3 shrink-0">
-    <div class="flex items-center gap-4">
-      <div class="flex items-center gap-1.5 pl-1">
-        <span class="w-3 h-3 rounded-full bg-[#ff5f56] inline-block"></span>
-        <span class="w-3 h-3 rounded-full bg-[#ffbd2e] inline-block"></span>
-        <span class="w-3 h-3 rounded-full bg-[#27c93f] inline-block"></span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold tracking-wider text-zinc-400">AI TERMINAL</span>
-        <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">v1.0</span>
+  <!-- 1. 顶部标题栏 (TitleBar) -->
+  <header class="h-10 border-b flex items-center justify-between pl-[76px] pr-3 shrink-0 select-none relative transition-colors duration-200" style="background-color: var(--header-bg); border-color: var(--border-color);">
+    <!-- macOS 窗口控制按钮占位 (原生窗口区域) -->
+    <div class="absolute left-3 top-3.5 flex items-center gap-1.5 pointer-events-none">
+      <span class="w-3 h-3 rounded-full bg-[#ff5f56] inline-block"></span>
+      <span class="w-3 h-3 rounded-full bg-[#ffbd2e] inline-block"></span>
+      <span class="w-3 h-3 rounded-full bg-[#27c93f] inline-block"></span>
+    </div>
+
+    <!-- 左侧：主机侧边栏折叠按钮 + 应用标识与版本 -->
+    <div class="flex items-center gap-2 mr-3 shrink-0 py-1">
+      <button onclick="toggleServerSidebar()" id="btn-toggle-sidebar" class="p-1 rounded cursor-pointer mr-0.5 hover:opacity-100 opacity-70 transition-opacity" title="收起/展开主机列表">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+      </button>
+
+      <div class="w-4 h-4 rounded bg-[#23d18b] flex items-center justify-center text-[10px] font-bold text-black font-terminal">T</div>
+      <span class="text-xs font-semibold tracking-wider font-mono">TINI TERMINAL</span>
+      <span class="text-[10px] px-1.5 py-0.5 rounded opacity-75 font-mono" style="background-color: var(--hover-bg); color: var(--text-muted);">v1.0</span>
+    </div>
+
+    <!-- 中间：当前活跃会话状态胶囊 -->
+    <div class="flex-1 flex items-center justify-center h-full px-4">
+      <div id="active-session-capsule" class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-terminal transition-colors" style="background-color: var(--hover-bg); color: var(--text-color);">
+        <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400"></span>
+        <span id="active-session-title" class="font-medium max-w-[320px] truncate">root@prod-01 (192.168.1.100)</span>
       </div>
     </div>
 
-    <!-- 中间：终端标签页 -->
-    <div class="flex items-center gap-1 overflow-x-auto max-w-xl h-full pt-1">
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-[#1a1b24] border-t border-l border-r border-zinc-700 text-xs text-zinc-200 cursor-pointer">
-        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-        <span class="font-terminal font-medium">prod-01 (192.168.1.100)</span>
-        <button class="text-zinc-500 hover:text-zinc-300 text-xs ml-1">&times;</button>
+    <!-- 右侧：全局动作按钮 -->
+    <div class="flex items-center gap-2 shrink-0 ml-2">
+      <!-- 终端字号快捷微调 -->
+      <div class="flex items-center rounded border px-1.5 py-0.5 text-xs mr-0.5" style="background-color: var(--card-bg); border-color: var(--border-color);">
+        <button onclick="adjustFontSize(-1)" class="px-1 cursor-pointer hover:opacity-100 opacity-70 font-semibold text-[11px]" title="缩小字号">A-</button>
+        <span id="current-font-size-label" class="px-1 text-[11px] font-mono font-medium" style="color: var(--accent-color);">14px</span>
+        <button onclick="adjustFontSize(1)" class="px-1 cursor-pointer hover:opacity-100 opacity-70 font-semibold text-[11px]" title="放大字号">A+</button>
       </div>
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-transparent hover:bg-zinc-800/40 text-xs text-zinc-400 cursor-pointer">
-        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-        <span class="font-terminal font-medium">dev-01</span>
-        <button class="text-zinc-600 hover:text-zinc-400 text-xs ml-1">&times;</button>
-      </div>
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-t bg-transparent hover:bg-zinc-800/40 text-xs text-zinc-400 cursor-pointer">
-        <span class="w-2 h-2 rounded-full bg-zinc-600"></span>
-        <span class="font-terminal font-medium">local-sh</span>
-        <button class="text-zinc-600 hover:text-zinc-400 text-xs ml-1">&times;</button>
-      </div>
-      <button class="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded text-xs ml-1" title="新建终端">+</button>
-    </div>
 
-    <!-- 右侧功能按键 -->
-    <div class="flex items-center gap-2">
-      <button onclick="toggleModal('modal-server')" class="px-2.5 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-1.5">
-        <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      <!-- 快捷主题切换菜单 -->
+      <div class="relative">
+        <button onclick="toggleThemeMenu()" class="p-1.5 rounded cursor-pointer transition-colors flex items-center gap-1 text-xs" style="background-color: var(--hover-bg);" title="切换内置主题">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+        </button>
+
+        <div id="theme-menu" class="hidden absolute right-0 top-9 w-44 rounded-lg border shadow-xl z-50 py-1 text-xs select-none" style="background-color: var(--card-bg); border-color: var(--border-color);">
+          <div class="px-3 py-1.5 text-[10px] font-semibold border-b" style="border-color: var(--border-color); color: var(--text-muted);">
+            内置主题与配色
+          </div>
+          <button onclick="setTheme('aliyun')" class="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-white/5">
+            <span>默认主题 (WebSSH)</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 theme-indicator theme-indicator-aliyun"></span>
+          </button>
+          <button onclick="setTheme('vscode')" class="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-white/5">
+            <span>VS Code Dark+</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-400 theme-indicator theme-indicator-vscode hidden"></span>
+          </button>
+          <button onclick="setTheme('github_dark')" class="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-white/5">
+            <span>GitHub Dark</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-400 theme-indicator theme-indicator-github_dark hidden"></span>
+          </button>
+          <button onclick="setTheme('github_light')" class="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-white/5">
+            <span>GitHub Light (浅色)</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-600 theme-indicator theme-indicator-github_light hidden"></span>
+          </button>
+          <button onclick="setTheme('one_dark')" class="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-white/5">
+            <span>One Dark Pro</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 theme-indicator theme-indicator-one_dark hidden"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 添加主机 -->
+      <button onclick="openServerModal()" class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 cursor-pointer font-medium" style="background-color: var(--hover-bg);">
+        <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
         添加主机
       </button>
-      <button onclick="toggleModal('modal-settings')" class="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded" title="AI 设置">
-        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+
+      <!-- SFTP 文件管理器 -->
+      <button onclick="toggleSftpDrawer()" class="p-1.5 rounded cursor-pointer" style="background-color: var(--hover-bg);" title="SFTP 文件管理器">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
       </button>
-      <button onclick="toggleSidebar('ai-panel')" class="px-2.5 py-1 text-xs rounded bg-indigo-600/80 hover:bg-indigo-600 text-white flex items-center gap-1.5 font-medium">
+
+      <!-- AI 智能体触发按钮 -->
+      <button id="btn-ai-toggle" onclick="toggleAiPanel()" class="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-semibold cursor-pointer transition-colors bg-[#23d18b] text-[#064e3b]">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
         AI 智能体
+      </button>
+
+      <!-- 系统设置按钮 -->
+      <button onclick="openSettingsModal()" class="p-1.5 rounded cursor-pointer" style="background-color: var(--hover-bg);" title="系统与 AI 配置">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       </button>
     </div>
   </header>
 
-  <!-- 主体工作区（三栏架构） -->
-  <main class="flex-1 flex overflow-hidden">
-    
-    <!-- 左侧：服务器管理侧边栏 -->
-    <aside id="sidebar-servers" class="w-64 bg-[#101118] border-r border-zinc-800 flex flex-col shrink-0">
-      <div class="p-2 border-b border-zinc-800/80">
+  <!-- 主体工作区（三栏弹性伸缩布局） -->
+  <main class="flex-1 flex overflow-hidden relative">
+
+    <!-- 2. 左侧：主机管理器侧边栏 (ServerSidebar) -->
+    <aside id="sidebar-servers" class="w-64 border-r flex flex-col shrink-0 select-none transition-colors duration-200 overflow-hidden" style="background-color: var(--sidebar-bg); border-color: var(--border-color);">
+      <!-- 侧边栏标题栏 -->
+      <div class="h-9 px-3 border-b flex items-center justify-between text-xs font-semibold shrink-0" style="border-color: var(--border-color);">
+        <span>主机列表</span>
+        <button onclick="toggleServerSidebar()" class="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity" title="收起主机栏">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+      </div>
+
+      <!-- 搜索框 -->
+      <div class="p-2 border-b" style="border-color: var(--border-color);">
         <div class="relative">
-          <input type="text" placeholder="搜索主机/IP..." class="w-full bg-[#181922] text-xs text-zinc-300 placeholder-zinc-500 rounded px-2.5 py-1.5 pl-7 border border-zinc-800 focus:outline-none focus:border-zinc-700">
-          <svg class="w-3.5 h-3.5 text-zinc-500 absolute left-2 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input type="text" placeholder="搜索主机名/IP/标签..." class="w-full text-xs rounded px-2.5 py-1.5 pl-7 border focus:outline-none transition-colors" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+          <svg class="w-3.5 h-3.5 absolute left-2 top-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         </div>
       </div>
 
+      <!-- 主机树列表 -->
       <div class="flex-1 overflow-y-auto p-2 space-y-3">
-        <!-- 分组：常用收藏 -->
+        <!-- 分组 1：本地环境 -->
         <div>
-          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
-            <span>常用收藏</span>
-            <span class="text-zinc-600 text-[10px]">3</span>
+          <div class="flex items-center justify-between text-[11px] font-semibold px-2 py-1 tracking-wider opacity-60">
+            <span>本地环境</span>
+          </div>
+          <div onclick="switchTab('tab-local', 'Local Shell', 'local')" class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group mt-0.5 hover:bg-white/5 transition-colors">
+            <div class="flex items-center gap-2 truncate">
+              <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+              <span class="font-medium truncate">本地 Shell</span>
+            </div>
+            <span class="text-[10px] font-terminal opacity-50">zsh/bash</span>
+          </div>
+        </div>
+
+        <!-- 分组 2：生产环境 (3台) -->
+        <div>
+          <div class="flex items-center justify-between text-[11px] font-semibold px-2 py-1 tracking-wider opacity-60">
+            <span>生产环境</span>
+            <span class="text-[10px]">3</span>
           </div>
           <div class="mt-1 space-y-0.5">
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 text-zinc-200 text-xs cursor-pointer border border-zinc-700/60">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <!-- prod-01 (活动会话) -->
+            <div onclick="switchTab('tab-prod-01', 'prod-01 (192.168.1.100)', 'ssh')" class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors bg-white/5">
+              <div class="flex items-center gap-2 truncate flex-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
                 <span class="font-medium truncate">prod-01</span>
               </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.100</span>
-            </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span class="truncate">prod-02</span>
+              <!-- 悬浮快捷动作栏 -->
+              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onclick="event.stopPropagation(); addTab('prod-01')" class="p-1 hover:opacity-100 opacity-60" title="新建标签"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg></button>
+                <button onclick="event.stopPropagation(); toggleSftpDrawer()" class="p-1 hover:opacity-100 opacity-60" title="打开 SFTP"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></button>
+                <button onclick="event.stopPropagation(); openServerModal('prod-01')" class="p-1 hover:opacity-100 opacity-60" title="编辑"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>
+                <button onclick="event.stopPropagation(); alert('演示模式不支持删除')" class="p-1 hover:text-red-400 opacity-60" title="删除"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
               </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.101</span>
+              <span class="text-[10px] font-terminal opacity-50 group-hover:hidden ml-1">192.168.1.100</span>
             </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span class="truncate">prod-03</span>
+
+            <!-- prod-02 -->
+            <div onclick="switchTab('tab-prod-02', 'prod-02 (192.168.1.101)', 'ssh')" class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+              <div class="flex items-center gap-2 truncate flex-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                <span class="font-medium truncate">prod-02</span>
               </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">192.168.1.102</span>
+              <span class="text-[10px] font-terminal opacity-50 ml-1">192.168.1.101</span>
+            </div>
+
+            <!-- prod-03 -->
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+              <div class="flex items-center gap-2 truncate flex-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                <span class="font-medium truncate">prod-03</span>
+              </div>
+              <span class="text-[10px] font-terminal opacity-50 ml-1">192.168.1.102</span>
             </div>
           </div>
         </div>
 
-        <!-- 分组：开发测试环境 -->
+        <!-- 分组 3：开发测试 (2台) -->
         <div>
-          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
+          <div class="flex items-center justify-between text-[11px] font-semibold px-2 py-1 tracking-wider opacity-60">
             <span>开发测试</span>
-            <span class="text-zinc-600 text-[10px]">2</span>
+            <span class="text-[10px]">2</span>
           </div>
           <div class="mt-1 space-y-0.5">
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span class="truncate">dev-01</span>
+            <div onclick="switchTab('tab-dev-01', 'dev-01 (10.0.4.12)', 'ssh')" class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+              <div class="flex items-center gap-2 truncate flex-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                <span class="font-medium truncate">dev-01</span>
               </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">10.0.4.12</span>
+              <span class="text-[10px] font-terminal opacity-50 ml-1">10.0.4.12</span>
             </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-zinc-600"></span>
-                <span class="truncate">dev-db</span>
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+              <div class="flex items-center gap-2 truncate flex-1">
+                <span class="w-2 h-2 rounded-full bg-zinc-500 shrink-0"></span>
+                <span class="font-medium truncate">dev-db</span>
               </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">10.0.4.15</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 分组：本地环境 -->
-        <div>
-          <div class="flex items-center justify-between text-[11px] font-semibold text-zinc-400 px-2 py-1 tracking-wider">
-            <span>本地终端</span>
-            <span class="text-zinc-600 text-[10px]">1</span>
-          </div>
-          <div class="mt-1 space-y-0.5">
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded hover:bg-zinc-800/30 text-zinc-300 text-xs cursor-pointer">
-              <div class="flex items-center gap-2 truncate">
-                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-                <span class="truncate">Local Shell</span>
-              </div>
-              <span class="text-[10px] text-zinc-500 font-terminal">zsh</span>
+              <span class="text-[10px] font-terminal opacity-50 ml-1">10.0.4.15</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="p-2.5 border-t border-zinc-800 text-[11px] text-zinc-500 flex items-center justify-between">
-        <span>已存主机: 6 台</span>
-        <button onclick="toggleModal('modal-server')" class="text-indigo-400 hover:underline">新建配置</button>
+      <!-- 侧边栏底部统计 -->
+      <div class="p-2.5 border-t text-[11px] flex items-center justify-between" style="border-color: var(--border-color); color: var(--text-muted);">
+        <span>已存主机: 5 台</span>
+        <button onclick="openServerModal()" class="cursor-pointer font-medium hover:underline" style="color: var(--accent-color);">新建主机</button>
       </div>
     </aside>
 
-    <!-- 中间：核心终端区域 -->
-    <section class="flex-1 flex flex-col bg-[#14151d] overflow-hidden relative">
-      <div class="h-8 bg-[#181924] border-b border-zinc-800/80 px-3 flex items-center justify-between text-xs text-zinc-400">
-        <div class="flex items-center gap-4">
-          <span class="font-terminal text-zinc-300 text-[11px]">root@prod-01: ~</span>
-          <span class="text-zinc-600">|</span>
-          <span class="text-[11px] text-zinc-400">Linux 6.6.137-cloud-arm64</span>
+    <!-- 侧边栏拖拽手柄 -->
+    <div class="resize-handle-x" title="拖拽调整主机栏宽度"></div>
+
+    <!-- 3. 中间：终端工作区 (SecondaryTabBar + XTerminal) -->
+    <section class="flex-1 flex flex-col overflow-hidden relative transition-colors duration-200" style="background-color: var(--terminal-bg);">
+      
+      <!-- 二级紧凑标签工作条 (SecondaryTabBar, h-[34px]) -->
+      <div class="h-[34px] border-b flex items-center justify-between px-2 gap-2 shrink-0 select-none relative transition-colors duration-200" style="background-color: var(--card-bg); border-color: var(--border-color);">
+        <!-- 左侧：横向滚动会话标签列表 -->
+        <div class="flex-1 flex items-center gap-1.5 overflow-x-auto h-full no-scrollbar py-1">
+          <!-- 标签 1: prod-01 #1 (活跃) -->
+          <div id="tab-prod-01" onclick="switchTab('tab-prod-01', 'root@prod-01 (192.168.1.100)', 'ssh')" class="tab-item flex items-center gap-1.5 px-2.5 py-1 rounded text-xs cursor-pointer shrink-0 border transition-all duration-150 group max-w-[200px]" style="background-color: var(--active-tab-bg); border-color: var(--accent-color); color: var(--text-color);">
+            <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400"></span>
+            <svg class="w-3 h-3 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+            <span class="font-terminal truncate text-[11px] font-medium">prod-01</span>
+            <span class="text-[9px] px-1 rounded font-mono font-bold shrink-0 opacity-80" style="background-color: var(--hover-bg); color: var(--accent-color);">#1</span>
+            <button onclick="event.stopPropagation(); closeTab('tab-prod-01')" class="p-0.5 rounded ml-0.5 cursor-pointer opacity-40 group-hover:opacity-100 hover:text-red-400">&times;</button>
+          </div>
+
+          <!-- 标签 2: prod-01 #2 (同机多开) -->
+          <div id="tab-prod-01-2" onclick="switchTab('tab-prod-01-2', 'root@prod-01 #2 (192.168.1.100)', 'ssh')" class="tab-item flex items-center gap-1.5 px-2.5 py-1 rounded text-xs cursor-pointer shrink-0 border transition-all duration-150 group max-w-[200px] border-transparent opacity-70 hover:opacity-100">
+            <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400"></span>
+            <svg class="w-3 h-3 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+            <span class="font-terminal truncate text-[11px] font-medium">prod-01</span>
+            <span class="text-[9px] px-1 rounded font-mono font-bold shrink-0 opacity-80" style="background-color: var(--hover-bg); color: var(--accent-color);">#2</span>
+            <button onclick="event.stopPropagation(); closeTab('tab-prod-01-2')" class="p-0.5 rounded ml-0.5 cursor-pointer opacity-40 group-hover:opacity-100 hover:text-red-400">&times;</button>
+          </div>
+
+          <!-- 标签 3: dev-01 -->
+          <div id="tab-dev-01" onclick="switchTab('tab-dev-01', 'dev-01 (10.0.4.12)', 'ssh')" class="tab-item flex items-center gap-1.5 px-2.5 py-1 rounded text-xs cursor-pointer shrink-0 border transition-all duration-150 group max-w-[200px] border-transparent opacity-70 hover:opacity-100">
+            <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400"></span>
+            <svg class="w-3 h-3 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+            <span class="font-terminal truncate text-[11px] font-medium">dev-01</span>
+            <button onclick="event.stopPropagation(); closeTab('tab-dev-01')" class="p-0.5 rounded ml-0.5 cursor-pointer opacity-40 group-hover:opacity-100 hover:text-red-400">&times;</button>
+          </div>
+
+          <!-- 标签 4: Local Shell -->
+          <div id="tab-local" onclick="switchTab('tab-local', 'Local Shell', 'local')" class="tab-item flex items-center gap-1.5 px-2.5 py-1 rounded text-xs cursor-pointer shrink-0 border transition-all duration-150 group max-w-[200px] border-transparent opacity-70 hover:opacity-100">
+            <span class="w-2 h-2 rounded-full shrink-0 bg-blue-400"></span>
+            <svg class="w-3 h-3 shrink-0 text-blue-400 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+            <span class="font-terminal truncate text-[11px] font-medium">Local Shell</span>
+            <button onclick="event.stopPropagation(); closeTab('tab-local')" class="p-0.5 rounded ml-0.5 cursor-pointer opacity-40 group-hover:opacity-100 hover:text-red-400">&times;</button>
+          </div>
+
+          <!-- 新建本地终端按键 -->
+          <button onclick="addLocalTab()" class="p-1 rounded text-xs cursor-pointer shrink-0 hover:opacity-100 opacity-60 transition-opacity" style="background-color: var(--hover-bg);" title="新建本地终端">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          </button>
         </div>
-        <div class="flex items-center gap-2">
-          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Clear</button>
-          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Reconnect</button>
-          <button class="px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px]">Copy All</button>
+
+        <!-- 右侧：会话操作与会话池总览下拉 -->
+        <div class="flex items-center gap-1 shrink-0 pl-2 border-l" style="border-color: var(--border-color);">
+          <button onclick="clearTerminalScreen()" class="px-2 py-0.5 rounded text-[11px] cursor-pointer hover:opacity-100 opacity-70" style="background-color: var(--hover-bg);">清屏</button>
+          <button onclick="copyTerminalText()" class="px-2 py-0.5 rounded text-[11px] cursor-pointer hover:opacity-100 opacity-70" style="background-color: var(--hover-bg);">复制</button>
+
+          <!-- 会话总览下拉 -->
+          <div class="relative">
+            <button onclick="toggleSessionPool()" class="px-2 py-0.5 rounded text-[11px] cursor-pointer flex items-center gap-1 border transition-colors" style="background-color: var(--hover-bg); border-color: var(--border-color);">
+              <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+              <span id="session-count-badge" class="font-mono text-[10px]">4</span>
+              <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+
+            <!-- 会话总览浮层 -->
+            <div id="session-pool-menu" class="hidden absolute right-0 top-8 w-72 rounded-lg border shadow-2xl z-50 p-2 flex flex-col gap-1 text-xs select-none" style="background-color: var(--card-bg); border-color: var(--border-color);">
+              <div class="px-2 py-1 text-[11px] font-semibold border-b flex items-center justify-between" style="border-color: var(--border-color); color: var(--text-muted);">
+                <span>活跃会话 (4)</span>
+                <span class="text-[10px]">点击快速切换</span>
+              </div>
+              <div class="relative my-1">
+                <input type="text" placeholder="搜索会话/IP..." class="w-full text-xs rounded px-2.5 py-1 pl-7 border focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+                <svg class="w-3 h-3 absolute left-2 top-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+              </div>
+              <div class="max-h-48 overflow-y-auto space-y-0.5">
+                <div class="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer bg-white/5 text-emerald-400">
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="truncate font-terminal">prod-01 (192.168.1.100) #1</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer hover:bg-white/5 opacity-80">
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="truncate font-terminal">prod-01 (192.168.1.100) #2</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer hover:bg-white/5 opacity-80">
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="truncate font-terminal">dev-01 (10.0.4.12)</span>
+                  </div>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer hover:bg-white/5 opacity-80">
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                    <span class="truncate font-terminal">Local Shell</span>
+                  </div>
+                </div>
+              </div>
+              <div class="pt-1.5 mt-1 border-t flex items-center justify-between text-[11px]" style="border-color: var(--border-color); color: var(--text-muted);">
+                <button onclick="alert('已关闭其他会话'); toggleSessionPool();" class="hover:text-red-400 cursor-pointer">关闭其他会话</button>
+                <button onclick="alert('已关闭全部会话'); toggleSessionPool();" class="hover:text-red-400 cursor-pointer">关闭全部</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="flex-1 p-3 overflow-y-auto font-terminal text-[14px] leading-[20px] text-zinc-300 selection:bg-indigo-500/40 selection:text-white" style="background-color: #12131b;">
-        <div class="text-zinc-500">Connecting to 192.168.1.100:22 as root...</div>
-        <div class="text-zinc-500">Authenticated with publickey (ed25519-sha2-nistp256).</div>
-        <div class="text-zinc-400 mt-1">Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.6.137 aarch64)</div>
-        <div class="text-zinc-500 text-xs mt-0.5">* Documentation:  https://help.ubuntu.com</div>
-        <div class="text-zinc-500 text-xs">* Management:     https://landscape.canonical.com</div>
-        <div class="text-zinc-400 mt-2">Last login: Mon Sep 21 16:32:08 2026 from 10.0.0.5</div>
+      <!-- 核心 xterm 视口区域 (严格等宽字符与黄金排版) -->
+      <div id="terminal-viewport" class="flex-1 p-3 overflow-y-auto font-terminal leading-[20px] select-text transition-colors duration-200" style="background-color: var(--terminal-bg); font-size: var(--term-font-size);">
+        <div class="opacity-60 text-xs">Connecting to 192.168.1.100:22 as root (ed25519-sha2-nistp256)...</div>
+        <div class="opacity-80 mt-1">Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.6.137 aarch64)</div>
+        <div class="opacity-50 text-xs mt-0.5">* System information: 22% CPU, 41% Memory, 72% Disk</div>
+        <div class="opacity-70 mt-2">Last login: Wed Sep 23 14:10:02 2026 from 10.0.0.12</div>
         
         <div class="mt-3">
-          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"</span>
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="opacity-50">:</span><span class="text-blue-400">~</span><span class="opacity-80"># </span><span class="text-zinc-100">docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}"</span>
         </div>
-        <div class="text-zinc-400 whitespace-pre">CONTAINER ID   NAMES            STATUS          PORTS</div>
-        <div class="text-zinc-300 whitespace-pre">a8f29c41b011   nginx-gateway    Up 4 days       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp</div>
-        <div class="text-zinc-300 whitespace-pre">71b99432ce02   app-backend      Up 4 days       127.0.0.1:8080->8080/tcp</div>
-        <div class="text-zinc-300 whitespace-pre">99ce1204d8ef   redis-cache      Up 12 days      127.0.0.1:6379->6379/tcp</div>
+        <div class="opacity-60 whitespace-pre">CONTAINER ID   NAMES            STATUS          PORTS</div>
+        <div class="opacity-90 whitespace-pre">a8f29c41b011   nginx-gateway    Up 4 days       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp</div>
+        <div class="opacity-90 whitespace-pre">71b99432ce02   app-backend      Up 4 days       127.0.0.1:8080->8080/tcp</div>
+        <div class="opacity-90 whitespace-pre">99ce1204d8ef   redis-cache      Up 12 days      127.0.0.1:6379->6379/tcp</div>
 
         <div class="mt-3">
-          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">systemctl status nginx</span>
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="opacity-50">:</span><span class="text-blue-400">~</span><span class="opacity-80"># </span><span class="text-zinc-100">systemctl status nginx</span>
         </div>
-        <div class="text-zinc-300">● nginx.service - A high performance web server and a reverse proxy server</div>
-        <div class="text-zinc-400 text-xs">     Loaded: loaded (/usr/lib/systemd/system/nginx.service; enabled; preset: enabled)</div>
-        <div class="text-zinc-400 text-xs">     Active: <span class="text-emerald-400 font-medium">active (running)</span> since Thu 2026-09-17 08:12:01 UTC; 4 days ago</div>
-        <div class="text-zinc-400 text-xs">   Main PID: 1104 (nginx)</div>
+        <div class="opacity-90">● nginx.service - A high performance web server and a reverse proxy server</div>
+        <div class="opacity-60 text-xs">     Loaded: loaded (/usr/lib/systemd/system/nginx.service; enabled; preset: enabled)</div>
+        <div class="opacity-60 text-xs">     Active: <span class="text-emerald-400 font-medium">active (running)</span> since Thu 2026-09-17 08:12:01 UTC; 6 days ago</div>
+        <div class="opacity-60 text-xs">   Main PID: 1104 (nginx)</div>
 
         <div class="mt-3">
-          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span><span class="text-zinc-100">uptime</span>
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="opacity-50">:</span><span class="text-blue-400">~</span><span class="opacity-80"># </span><span class="text-zinc-100">uptime</span>
         </div>
-        <div class="text-zinc-300"> 17:42:15 up 12 days,  4:10,  2 users,  load average: 0.18, 0.22, 0.19</div>
+        <div class="opacity-90"> 14:15:32 up 14 days,  6:20,  2 users,  load average: 0.16, 0.20, 0.18</div>
 
         <!-- 交互光标 -->
         <div class="mt-3 flex items-center">
-          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="text-zinc-500">:</span><span class="text-blue-400">~</span><span class="text-zinc-400"># </span>
-          <span class="inline-block w-2.5 h-4 bg-zinc-300 ml-1 cursor-blink"></span>
+          <span class="text-emerald-400 font-semibold">root@prod-01</span><span class="opacity-50">:</span><span class="text-blue-400">~</span><span class="opacity-80"># </span>
+          <span class="inline-block w-[2px] h-4 bg-zinc-200 ml-1 cursor-blink"></span>
         </div>
       </div>
     </section>
 
-    <!-- 右侧：AI Agent 侧边智能面板 -->
-    <aside id="sidebar-ai" class="w-96 bg-[#11121a] border-l border-zinc-800 flex flex-col shrink-0">
-      <div class="h-10 px-3 border-b border-zinc-800 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
-          <span class="text-xs font-semibold text-zinc-200">AI 运维助手</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">deepseek-reasoner</span>
+    <!-- AI 侧边栏拖拽手柄 -->
+    <div class="resize-handle-x" title="拖拽调整 AI 面板宽度，双击快速切换宽屏/紧凑模式" ondblclick="toggleAiWide()"></div>
+
+    <!-- 4. 右侧：AI 智能运维工作面板 (AgentPanel + MiniTerminalConsole) -->
+    <aside id="sidebar-ai" class="w-96 border-l flex flex-col shrink-0 select-none transition-colors duration-200 overflow-hidden" style="background-color: var(--agent-bg); border-color: var(--border-color);">
+      <!-- 顶部控制栏 -->
+      <div class="h-10 px-3 border-b flex items-center justify-between shrink-0" style="border-color: var(--border-color);">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="w-2 h-2 rounded-full shrink-0" style="background-color: var(--accent-color);"></span>
+          <span class="font-semibold text-xs truncate">AI 智能运维</span>
         </div>
-        <div class="flex items-center text-[11px] bg-zinc-800 rounded p-0.5 border border-zinc-700">
-          <button class="px-2 py-0.5 rounded text-zinc-400 hover:text-zinc-200">只读</button>
-          <button class="px-2 py-0.5 rounded bg-indigo-600 text-white font-medium">需确认</button>
-          <button class="px-2 py-0.5 rounded text-zinc-400 hover:text-zinc-200">全权</button>
+
+        <div class="flex items-center gap-1 shrink-0">
+          <button onclick="clearAiChat()" class="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity" title="清空对话">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </button>
+          <button onclick="toggleAiWide()" id="btn-ai-wide" class="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity" title="切换宽屏模式">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+          </button>
+          <button onclick="toggleAiPanel()" class="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity" title="收起面板">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </button>
         </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto p-3 space-y-3.5">
-        <div class="flex flex-col items-end">
-          <div class="bg-indigo-600/20 border border-indigo-500/40 text-zinc-100 text-xs rounded-lg px-3 py-2 max-w-[85%]">
-            检查一下服务器端口 80 和 443 是否正常监听，以及防火墙规则。
+      <!-- 消息与多步任务时间线 -->
+      <div id="ai-chat-container" class="flex-1 overflow-y-auto p-3 space-y-3.5 select-text">
+        <!-- 用户提问 -->
+        <div class="flex flex-col items-end group select-text">
+          <div class="flex items-start gap-1.5 max-w-[90%]">
+            <button onclick="copyText('检查一下服务器端口 80 和 443 是否正常监听，以及防火墙规则。')" class="opacity-0 group-hover:opacity-70 hover:!opacity-100 p-1 rounded transition-all cursor-pointer shrink-0 mt-1" title="复制提问">
+              <svg class="w-3.5 h-3.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </button>
+            <div class="border rounded-lg px-3 py-2 break-words leading-relaxed select-text text-xs" style="background-color: rgba(35, 209, 139, 0.15); border-color: var(--accent-color);">
+              检查一下服务器端口 80 和 443 是否正常监听，以及防火墙规则。
+            </div>
           </div>
-          <span class="text-[10px] text-zinc-500 mt-1">17:40</span>
+          <span class="mt-1 mr-1 text-[10px] opacity-40 select-none">14:12:40</span>
         </div>
 
+        <!-- AI 助理思考与工具流 -->
         <div class="space-y-2">
-          <div class="border border-zinc-800 rounded bg-[#161722] p-2.5">
-            <div class="flex items-center justify-between text-[11px] text-zinc-400">
-              <span class="flex items-center gap-1.5 font-medium text-indigo-300">
-                推理分析与执行计划
+          <!-- 思考过程卡片 (支持展开/折叠与计时) -->
+          <div class="border rounded p-2.5 transition-colors text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between font-medium select-none" style="color: var(--accent-color);">
+              <span onclick="toggleThinkingBody()" class="flex items-center gap-1.5 cursor-pointer flex-1">
+                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>思考与推理分析 (1.2s)</span>
               </span>
-              <span class="text-zinc-600 text-[10px]">耗时 1.2s</span>
-            </div>
-            <div class="mt-2 text-[11px] text-zinc-400 space-y-1 pl-4 border-l border-zinc-800">
-              <div>1. 查询端口监听状态 (`ss -lntp`)</div>
-              <div>2. 检查 ufw / iptables 防火墙规则</div>
-              <div>3. 综合评估并输出诊断结论</div>
-            </div>
-          </div>
-
-          <div class="border border-zinc-800 rounded bg-[#141520] p-2.5 text-xs">
-            <div class="flex items-center justify-between text-zinc-300">
-              <div class="flex items-center gap-1.5 font-terminal text-[11px]">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                <span>terminal.exec</span>
+              <div class="flex items-center gap-1.5">
+                <button onclick="copyText('计划：\n1. 查询端口状态 ss -tlpn\n2. 检查 ufw 防火墙规则\n3. 综合判断输出结论')" class="p-1 rounded opacity-60 hover:opacity-100" title="复制思考">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                </button>
+                <span onclick="toggleThinkingBody()" class="cursor-pointer p-0.5">
+                  <svg id="icon-thinking-chevron" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </span>
               </div>
-              <span class="text-[10px] text-emerald-400 font-mono">成功 0</span>
             </div>
-            <div class="mt-1 font-terminal text-[11px] text-zinc-400 bg-zinc-900/80 px-2 py-1 rounded">
-              ss -tlpn | grep -E ':80|:443'
+            <div id="thinking-body" class="mt-2 whitespace-pre-wrap leading-relaxed border-t pt-2 font-mono text-[11px] opacity-75" style="border-color: var(--border-color);">
+目标是排查 80 与 443 端口的监听与防火墙放行状态：
+1. 优先调用 terminal_exec 工具执行 ss -tlpn 检查套接字状态。
+2. 随后调用 ufw status verbose 验证安全组/防火墙策略。
+3. 综合两者状态给出网络可达性评估。
             </div>
-            <div class="mt-1.5 text-[11px] text-zinc-400 font-terminal bg-black/40 p-1.5 rounded text-xs whitespace-pre">LISTEN 0 511 0.0.0.0:80   0.0.0.0:* users:(("docker-proxy",pid=842))
-LISTEN 0 511 0.0.0.0:443  0.0.0.0:* users:(("docker-proxy",pid=856))</div>
           </div>
 
-          <div class="border border-amber-500/40 rounded bg-amber-950/20 p-2.5 text-xs">
+          <!-- 工具卡片 1：terminal_exec (MiniTerminalConsole 实际落地表现) -->
+          <div class="border rounded p-2.5 transition-colors text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
             <div class="flex items-center justify-between">
-              <div class="flex items-center gap-1.5 font-terminal text-[11px] text-amber-300 font-medium">
-                <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                <span>terminal.exec (待确认)</span>
+              <div class="flex items-center gap-1.5 font-terminal text-[11px]">
+                <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+                <span class="font-medium">terminal_exec</span>
               </div>
-              <span class="text-[10px] text-amber-400">需要授权</span>
+              <span class="text-emerald-400 flex items-center gap-1 text-[11px]">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> 成功
+              </span>
             </div>
-            <div class="mt-1 font-terminal text-[11px] text-zinc-200 bg-black/40 px-2 py-1 rounded border border-amber-500/30">
+
+            <!-- MiniTerminalConsole 嵌入式微型终端 -->
+            <div class="mt-2 rounded border overflow-hidden flex flex-col font-mono text-[11px]" style="background-color: #0f1117; border-color: var(--border-color);">
+              <div class="px-2.5 py-1.5 border-b flex items-center justify-between select-none shrink-0" style="background-color: #161922; border-color: var(--border-color); color: var(--text-muted);">
+                <div class="flex items-center gap-1.5 min-w-0 mr-2">
+                  <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+                  <span class="font-semibold truncate text-zinc-300">$ ss -tlpn | grep -E ':80|:443'</span>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <span class="text-[10px] text-emerald-400 font-mono">0</span>
+                  <span class="text-[10px] opacity-60 font-mono">28ms</span>
+                  <button onclick="openMiniTermModal()" class="p-1 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200" title="弹出窗口放大查看">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                  </button>
+                  <button onclick="copyText('LISTEN 0 511 0.0.0.0:80\nLISTEN 0 511 0.0.0.0:443')" class="p-1 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200" title="复制输出">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="p-2 overflow-y-auto whitespace-pre-wrap break-all font-mono leading-relaxed max-h-32 text-zinc-300">
+LISTEN 0 511 0.0.0.0:<span class="text-emerald-400 font-semibold">80</span>   0.0.0.0:* users:(("docker-proxy",pid=842))
+LISTEN 0 511 0.0.0.0:<span class="text-emerald-400 font-semibold">443</span>  0.0.0.0:* users:(("docker-proxy",pid=856))
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具卡片 2：单步待授权卡片 (Ask Mode 实际落地表现) -->
+          <div id="card-pending-tool" class="border rounded p-2.5 transition-colors text-xs" style="background-color: rgba(245, 158, 11, 0.12); border-color: #f59e0b;">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-1.5 font-terminal text-[11px] text-amber-400 font-medium">
+                <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <span>terminal_exec</span>
+              </div>
+              <span class="text-amber-400 font-medium text-[11px]">待授权</span>
+            </div>
+            <div class="mt-1 font-terminal px-2 py-1 rounded border text-[11px] bg-black/40 border-amber-500/30 text-amber-200">
               ufw status verbose
             </div>
-            <div class="mt-2 flex items-center justify-end gap-2">
-              <button class="px-2.5 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300">拒绝</button>
-              <button class="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white font-medium">允许执行</button>
+            <div class="mt-1.5 text-amber-400 flex items-center gap-1 text-[10px]">
+              <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>正在请求检查系统防火墙规则配置</span>
+            </div>
+            <div class="mt-2.5 flex items-center justify-end gap-2 pt-1 border-t border-amber-500/30">
+              <button onclick="approveTool(false)" class="px-2.5 py-1 rounded cursor-pointer transition-colors text-xs hover:bg-white/10" style="background-color: var(--hover-bg);">拒绝</button>
+              <button onclick="approveTool(true)" class="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer text-xs">允许执行</button>
             </div>
           </div>
 
-          <div class="bg-zinc-800/40 border border-zinc-800 text-zinc-200 text-xs rounded-lg p-3">
-            <p class="font-medium text-zinc-100 mb-1">检查分析：</p>
-            <p class="text-zinc-300 leading-relaxed">
-              80 与 443 端口已由 Docker 正常监听。待防火墙规则确认放行后，外部网络可顺畅访问。
-            </p>
+          <!-- AI 分析结论卡片 (MarkdownView 落地表现) -->
+          <div class="border rounded-lg p-3 leading-relaxed transition-colors select-text text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between pb-1.5 mb-2 border-b select-none" style="border-color: var(--border-color);">
+              <span class="text-[11px] font-medium opacity-60">AI 分析结果</span>
+              <button onclick="copyText('80 与 443 端口已处于 LISTEN 状态，服务正常。')" class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium cursor-pointer hover:opacity-100 opacity-70" style="background-color: var(--hover-bg);">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                <span>复制</span>
+              </button>
+            </div>
+            <div class="space-y-1.5 leading-relaxed opacity-90">
+              <p>诊断结论与排查结果：</p>
+              <ul class="list-disc list-inside space-y-1 opacity-80 pl-1 font-mono text-[11px]">
+                <li><strong class="text-emerald-400">80 端口 (HTTP)</strong>：Docker Proxy 正常监听，PID 842</li>
+                <li><strong class="text-emerald-400">443 端口 (HTTPS)</strong>：Docker Proxy 正常监听，PID 856</li>
+              </ul>
+              <p class="mt-2 text-zinc-300">
+                服务已在 0.0.0.0 全部接口正常暴露。待授权放行 UFW 规则后即可对外提供公网访问。
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="p-3 border-t border-zinc-800 bg-[#12131b]">
+      <!-- 底部输入框 -->
+      <div class="p-3 border-t transition-colors shrink-0" style="background-color: var(--agent-bg); border-color: var(--border-color);">
         <div class="relative">
-          <textarea placeholder="向 Agent 描述运维任务或排错需求..." rows="2" class="w-full bg-[#181924] text-xs text-zinc-200 placeholder-zinc-500 rounded-lg p-2.5 border border-zinc-700/60 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+          <textarea id="ai-input" placeholder="向 Agent 描述运维任务或排障需求..." rows="2" class="w-full rounded-lg p-2.5 border focus:outline-none resize-none transition-colors text-xs" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);"></textarea>
           <div class="flex items-center justify-between mt-1.5">
-            <span class="text-[10px] text-zinc-500">Shift + Enter 换行</span>
-            <button class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded font-medium">发送</button>
+            <span class="text-[10px] opacity-40">Cmd + Enter 发送 / Enter 换行</span>
+            <button onclick="sendAiMsg()" class="px-3 py-1 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90 text-xs bg-[#23d18b] text-[#064e3b]">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+              发送
+            </button>
           </div>
         </div>
       </div>
     </aside>
+
   </main>
 
-  <!-- 底部状态栏 -->
-  <footer class="h-6 bg-[#0e0f15] border-t border-zinc-800/90 px-3 flex items-center justify-between text-[11px] text-zinc-400 shrink-0">
+  <!-- 5. 底部状态栏 (StatusBar) -->
+  <footer class="h-6 border-t px-3 flex items-center justify-between text-[11px] shrink-0 select-none transition-colors duration-200" style="background-color: var(--header-bg); border-color: var(--border-color); color: var(--text-muted);">
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-1.5">
         <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-        <span class="text-zinc-300">已连接: prod-01 (192.168.1.100:22)</span>
+        <span style="color: var(--text-color);">已连接: prod-01 (192.168.1.100:22)</span>
       </div>
       <span>延迟: 18ms</span>
       <span>编码: UTF-8</span>
     </div>
+    <div class="flex items-center gap-3">
+      <span>CPU: 22%</span>
+      <span>内存: 41%</span>
+      <span>磁盘: 72%</span>
+    </div>
   </footer>
 
-  <!-- 弹窗 1：添加/编辑服务器配置 -->
-  <div id="modal-server" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-[#161722] border border-zinc-700 rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
-        <h3 class="text-sm font-semibold text-zinc-100">添加主机配置</h3>
-        <button onclick="toggleModal('modal-server')" class="text-zinc-400 hover:text-zinc-200 text-sm">&times;</button>
+  <!-- 6. 模态窗口 1：新建/编辑主机配置 (ServerModal) -->
+  <div id="modal-server" class="hidden fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none">
+    <div class="rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4 border" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-color);">
+      <div class="flex items-center justify-between border-b pb-3" style="border-color: var(--border-color);">
+        <h3 id="modal-server-title" class="text-sm font-semibold">新建主机配置</h3>
+        <button onclick="closeServerModal()" class="p-1 rounded cursor-pointer opacity-60 hover:opacity-100">&times;</button>
       </div>
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block text-zinc-400 mb-1">连接名称</label>
-          <input type="text" value="prod-04" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+          <label class="block mb-1 opacity-70">连接名称</label>
+          <input type="text" id="srv-name" value="prod-04" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
         </div>
         <div class="grid grid-cols-3 gap-2">
           <div class="col-span-2">
-            <label class="block text-zinc-400 mb-1">主机地址 (IP 或域名)</label>
-            <input type="text" placeholder="192.168.1.104" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+            <label class="block mb-1 opacity-70">主机地址 (IP 或域名)</label>
+            <input type="text" id="srv-host" value="192.168.1.104" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
           </div>
           <div>
-            <label class="block text-zinc-400 mb-1">端口</label>
-            <input type="number" value="22" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+            <label class="block mb-1 opacity-70">端口</label>
+            <input type="number" id="srv-port" value="22" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
           </div>
         </div>
         <div>
-          <label class="block text-zinc-400 mb-1">用户名</label>
-          <input type="text" value="root" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+          <label class="block mb-1 opacity-70">登录用户名</label>
+          <input type="text" id="srv-username" value="root" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
         </div>
         <div>
-          <label class="block text-zinc-400 mb-1">认证方式</label>
-          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-            <option>SSH 私钥</option>
+          <label class="block mb-1 opacity-70">认证方式</label>
+          <select class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+            <option>SSH 私钥文件或密钥文本</option>
             <option>密码认证</option>
-            <option>SSH Agent</option>
+            <option>本地 SSH Agent</option>
           </select>
         </div>
         <div>
-          <label class="block text-zinc-400 mb-1">私钥路径或密钥文本</label>
-          <input type="text" value="~/.ssh/id_ed25519" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+          <label class="block mb-1 opacity-70">私钥绝对路径或内容</label>
+          <input type="text" value="~/.ssh/id_ed25519" class="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
         </div>
-        <div>
-          <label class="block text-zinc-400 mb-1">分组标签</label>
-          <input type="text" value="生产集群" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block mb-1 opacity-70">所属分组</label>
+            <input type="text" value="生产环境" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+          </div>
+          <div>
+            <label class="block mb-1 opacity-70">标签分类</label>
+            <input type="text" value="web,nginx" class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+          </div>
         </div>
       </div>
-      <div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
-        <button onclick="toggleModal('modal-server')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">取消</button>
-        <button onclick="toggleModal('modal-server')" class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium">保存连接</button>
+      <div class="flex items-center justify-end gap-2 pt-3 border-t" style="border-color: var(--border-color);">
+        <button onclick="closeServerModal()" class="px-4 py-1.5 rounded border text-xs cursor-pointer hover:opacity-80" style="background-color: var(--hover-bg); border-color: var(--border-color);">取消</button>
+        <button onclick="saveServerConfig()" class="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer text-black hover:opacity-90 bg-[#23d18b] text-[#064e3b]">保存配置</button>
       </div>
     </div>
   </div>
 
-  <!-- 弹窗 2：AI 供应商与 API 配置 -->
-  <div id="modal-settings" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-[#161722] border border-zinc-700 rounded-xl w-full max-w-md p-5 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
-        <h3 class="text-sm font-semibold text-zinc-100">AI 智能体模型配置</h3>
-        <button onclick="toggleModal('modal-settings')" class="text-zinc-400 hover:text-zinc-200 text-sm">&times;</button>
+  <!-- 7. 模态窗口 2：系统与 AI 配置中心 (SettingsModal) -->
+  <div id="modal-settings" class="hidden fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none">
+    <div class="rounded-xl w-full max-w-2xl h-[490px] shadow-2xl flex flex-col overflow-hidden border" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-color);">
+      <!-- 弹窗顶栏 -->
+      <div class="h-11 px-4 border-b flex items-center justify-between shrink-0" style="background-color: var(--header-bg); border-color: var(--border-color);">
+        <span class="text-xs font-semibold tracking-wide">系统设置</span>
+        <button onclick="closeSettingsModal()" class="p-1 rounded cursor-pointer opacity-60 hover:opacity-100">&times;</button>
       </div>
-      <div class="space-y-3 text-xs">
-        <div>
-          <label class="block text-zinc-400 mb-1">提供商类型</label>
-          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-            <option>DeepSeek</option>
-            <option>OpenAI</option>
-            <option>Ollama (本地)</option>
-            <option>vLLM</option>
-            <option>自定义 (OpenAI 兼容)</option>
-          </select>
+
+      <!-- 弹窗主体分栏 -->
+      <div class="flex-1 flex overflow-hidden">
+        <!-- 左侧菜单 -->
+        <div class="w-44 border-r p-2 flex flex-col justify-between shrink-0" style="background-color: var(--sidebar-bg); border-color: var(--border-color);">
+          <div class="space-y-1">
+            <button onclick="switchSettingsTab('appearance')" id="btn-tab-appearance" class="w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer" style="background-color: var(--hover-bg); color: var(--accent-color);">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+              <span>外观与终端</span>
+            </button>
+            <button onclick="switchSettingsTab('ai')" id="btn-tab-ai" class="w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer opacity-60 hover:opacity-100">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+              <span>AI 智能运维</span>
+            </button>
+          </div>
+          <div class="text-[10px] px-2 py-1 font-mono opacity-50">配置自动同步本地</div>
         </div>
-        <div>
-          <label class="block text-zinc-400 mb-1">API Base URL</label>
-          <input type="text" value="https://api.deepseek.com/v1" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="block text-zinc-400 mb-1">API Key</label>
-          <input type="password" value="sk-xxxxxxxxxxxxxxxxxxxxxxxx" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="block text-zinc-400 mb-1">模型名称</label>
-          <input type="text" value="deepseek-chat" class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="block text-zinc-400 mb-1">危险命令拦截等级</label>
-          <select class="w-full bg-[#1d1e2b] border border-zinc-700 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-            <option>高等级 (强制弹窗拦截 rm -rf, dd, mkfs, reboot, iptables)</option>
-            <option>中等级 (拦截格式化与关机指令)</option>
-            <option>全放行 (仅供测试)</option>
-          </select>
+
+        <!-- 右侧内容区域 -->
+        <div class="flex-1 overflow-y-auto p-5" style="background-color: var(--terminal-bg);">
+          <!-- 面板 1：外观与终端 -->
+          <div id="panel-settings-appearance" class="space-y-4 text-xs">
+            <div>
+              <h4 class="font-semibold uppercase tracking-wider mb-1">界面与终端主题</h4>
+              <p class="text-[11px] mb-2 opacity-60">选择终端与全局界面的色彩风格</p>
+              <select onchange="setTheme(this.value)" class="w-full border rounded px-2.5 py-2 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+                <option value="aliyun">默认主题 (阿里云 WebSSH 质感)</option>
+                <option value="vscode">VS Code Dark+</option>
+                <option value="github_dark">GitHub Dark</option>
+                <option value="github_light">GitHub Light (浅色)</option>
+                <option value="one_dark">One Dark Pro</option>
+              </select>
+            </div>
+
+            <div class="pt-2 border-t" style="border-color: var(--border-color);">
+              <h4 class="font-semibold uppercase tracking-wider mb-1">终端与 Agent 字体大小</h4>
+              <p class="text-[11px] mb-2 opacity-60">调整终端与运维面板字符大小 (11px ~ 22px，支持即时自适应渲染)</p>
+              <div class="flex items-center gap-3 p-2.5 rounded border" style="background-color: var(--input-bg); border-color: var(--border-color);">
+                <button onclick="adjustFontSize(-1)" class="w-7 h-7 rounded border font-bold flex items-center justify-center cursor-pointer hover:opacity-80" style="background-color: var(--hover-bg); border-color: var(--border-color);">-</button>
+                <input type="range" min="11" max="22" value="14" id="range-font-size" oninput="setFontSize(this.value)" class="flex-1 cursor-pointer">
+                <span id="slider-font-size-val" class="w-12 text-center font-mono font-semibold" style="color: var(--accent-color);">14px</span>
+                <button onclick="adjustFontSize(1)" class="w-7 h-7 rounded border font-bold flex items-center justify-center cursor-pointer hover:opacity-80" style="background-color: var(--hover-bg); border-color: var(--border-color);">+</button>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t" style="border-color: var(--border-color);">
+              <h4 class="font-semibold uppercase tracking-wider mb-1">终端字体栈</h4>
+              <p class="text-[11px] mb-2 opacity-60">严格等宽字符渲染链</p>
+              <input type="text" readonly value="JetBrains Mono, Menlo, Cascadia Mono, monospace" class="w-full border rounded px-2.5 py-1.5 font-mono text-[11px] cursor-not-allowed opacity-70" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-muted);">
+            </div>
+          </div>
+
+          <!-- 面板 2：AI 智能运维模型参数配置 -->
+          <div id="panel-settings-ai" class="hidden space-y-3.5 text-xs">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="font-medium">模型配置</label>
+                <div class="flex items-center gap-1.5">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium border" style="border-color: var(--accent-color); color: var(--accent-color);">已激活</span>
+                  <button type="button" class="px-2 py-0.5 rounded border text-[11px] font-medium hover:opacity-80" style="background-color: var(--hover-bg); border-color: var(--border-color);">+ 新增</button>
+                </div>
+              </div>
+              <select class="w-full border rounded px-2.5 py-1.5 focus:outline-none font-mono text-xs" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+                <option>DeepSeek 官方 (激活)</option>
+                <option>OpenAI gpt-4o</option>
+                <option>Ollama 本地大模型</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-medium mb-1">模型提供商</label>
+              <select class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+                <option>DeepSeek</option>
+                <option>OpenAI</option>
+                <option>Ollama (本地私有化)</option>
+                <option>vLLM (本地/云端部署)</option>
+                <option>自定义 (OpenAI 兼容协议)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-medium mb-1">API Base URL</label>
+              <input type="text" value="https://api.deepseek.com/v1" class="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+            </div>
+
+            <div>
+              <label class="block font-medium mb-1">API Key</label>
+              <input type="password" value="sk-xxxxxxxxxxxxxxxxxxxxxxxx" class="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+            </div>
+
+            <div>
+              <label class="block font-medium mb-1">模型名称</label>
+              <input type="text" value="deepseek-chat" class="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+            </div>
+
+            <div>
+              <label class="block font-medium mb-1">执行授权模式</label>
+              <select class="w-full border rounded px-2.5 py-1.5 focus:outline-none" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+                <option>需确认 (高危与写操作需人工确认)</option>
+                <option>只读模式 (仅允许查询指令与文件查看)</option>
+                <option>全权模式 (自动授权执行所有智能运维指令)</option>
+              </select>
+            </div>
+
+            <div class="pt-2 flex items-center justify-between">
+              <button onclick="testAiConn()" class="px-3 py-1.5 rounded border text-xs cursor-pointer flex items-center gap-1.5 font-medium" style="background-color: var(--hover-bg); border-color: var(--border-color);">
+                测试连接
+              </button>
+              <span id="ai-test-badge" class="hidden text-xs px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-800/60 text-emerald-300">
+                连接成功 (HTTP 200, 耗时: 128ms)
+              </span>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="flex items-center justify-between pt-2 border-t border-zinc-800">
-        <button class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">测试连接</button>
+
+      <!-- 弹窗底栏 -->
+      <div class="h-12 px-4 border-t flex items-center justify-end gap-2 shrink-0" style="background-color: var(--header-bg); border-color: var(--border-color);">
+        <button onclick="closeSettingsModal()" class="px-4 py-1.5 rounded text-xs cursor-pointer border hover:opacity-80" style="background-color: var(--hover-bg); border-color: var(--border-color);">取消</button>
+        <button onclick="closeSettingsModal()" class="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer text-black hover:opacity-90 bg-[#23d18b] text-[#064e3b]">保存配置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. SFTP 侧抽屉面板 (FileManagerDrawer) -->
+  <div id="drawer-sftp" class="hidden fixed inset-y-0 right-0 w-[580px] border-l shadow-2xl z-40 flex flex-col select-none transition-colors duration-200" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-color);">
+    <!-- 抽屉头部 -->
+    <div class="h-10 px-3 border-b flex items-center justify-between" style="background-color: var(--header-bg); border-color: var(--border-color);">
+      <div class="flex items-center gap-2 min-w-0">
+        <svg class="w-4 h-4 shrink-0 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <span class="text-xs font-semibold whitespace-nowrap">SFTP 文件管理器</span>
+        <span class="text-[10px] font-mono truncate opacity-60">prod-01 (192.168.1.100)</span>
+      </div>
+      <button onclick="toggleSftpDrawer()" class="p-1 rounded cursor-pointer opacity-60 hover:opacity-100">&times;</button>
+    </div>
+
+    <!-- 面包屑导航与快捷工具条 -->
+    <div class="h-9 border-b px-2.5 flex items-center justify-between gap-2 text-xs" style="background-color: var(--sidebar-bg); border-color: var(--border-color);">
+      <div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden font-mono text-[11px]">
+        <button class="p-1 rounded hover:opacity-100 opacity-70 cursor-pointer shrink-0" title="返回上一级">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        </button>
+        <div class="flex items-center gap-0.5 truncate cursor-pointer py-0.5 px-1 rounded hover:bg-white/5">
+          <span class="hover:underline font-semibold" style="color: var(--accent-color);">/</span>
+          <span class="opacity-40">&gt;</span>
+          <span class="hover:underline">etc</span>
+          <span class="opacity-40">&gt;</span>
+          <span class="font-bold">nginx</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-1 shrink-0">
+        <button onclick="alert('新建文件夹')" class="p-1.5 rounded hover:opacity-100 opacity-75 border" style="background-color: var(--hover-bg); border-color: var(--border-color);" title="新建文件夹">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+        </button>
+        <button onclick="alert('新建文件')" class="p-1.5 rounded hover:opacity-100 opacity-75 border" style="background-color: var(--hover-bg); border-color: var(--border-color);" title="新建文件">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        </button>
+        <button onclick="alert('触发文件上传')" class="px-2 py-1 rounded hover:opacity-100 opacity-75 flex items-center gap-1 border" style="background-color: var(--hover-bg); border-color: var(--border-color);" title="上传">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          <span class="text-[11px] font-medium">上传</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- SFTP 内容主区：文件列表模式与编辑模式切换 -->
+    <div id="sftp-file-list" class="flex-1 overflow-y-auto p-2 space-y-0.5">
+      <div onclick="openSftpEditor('nginx.conf')" class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+        <div class="flex items-center gap-2 truncate">
+          <svg class="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span class="font-medium truncate font-terminal">nginx.conf</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] opacity-60 font-mono">
+          <span>1.4 KB</span>
+          <span>rw-r--r--</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+        <div class="flex items-center gap-2 truncate">
+          <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+          <span class="font-medium truncate font-terminal">conf.d</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] opacity-60 font-mono">
+          <span>4.0 KB</span>
+          <span>rwxr-xr-x</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+        <div class="flex items-center gap-2 truncate">
+          <svg class="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span class="font-medium truncate font-terminal">mime.types</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] opacity-60 font-mono">
+          <span>5.2 KB</span>
+          <span>rw-r--r--</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between px-2.5 py-1.5 rounded text-xs cursor-pointer group hover:bg-white/5 transition-colors">
+        <div class="flex items-center gap-2 truncate">
+          <svg class="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span class="font-medium truncate font-terminal">fastcgi_params</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] opacity-60 font-mono">
+          <span>1.0 KB</span>
+          <span>rw-r--r--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SFTP 文件在线编辑器 -->
+    <div id="sftp-editor" class="hidden flex-1 flex flex-col h-full" style="background-color: var(--terminal-bg);">
+      <div class="h-8 px-3 border-b flex items-center justify-between text-xs" style="background-color: var(--header-bg); border-color: var(--border-color);">
+        <span class="font-mono text-[11px]">nginx.conf</span>
         <div class="flex items-center gap-2">
-          <button onclick="toggleModal('modal-settings')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs">取消</button>
-          <button onclick="toggleModal('modal-settings')" class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium">应用配置</button>
+          <button onclick="closeSftpEditor()" class="px-2 py-0.5 rounded border text-[11px] cursor-pointer" style="background-color: var(--hover-bg); border-color: var(--border-color);">返回列表</button>
+          <button onclick="alert('已模拟保存覆盖远程文件'); closeSftpEditor();" class="px-2.5 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer bg-[#23d18b] text-[#064e3b]">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+            保存覆盖
+          </button>
         </div>
+      </div>
+      <textarea class="flex-1 w-full p-3 font-terminal text-[13px] leading-[18px] bg-transparent border-none outline-none resize-none font-mono text-zinc-300" spellcheck="false">user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    types_hash_max_size 2048;
+
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+        root /var/www/html;
+        index index.html;
+    }
+}</textarea>
+    </div>
+  </div>
+
+  <!-- 9. 模态窗口 3：MiniTerminalConsole 全屏放大复盘窗口 -->
+  <div id="modal-mini-term" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-xs select-none">
+    <div class="w-full max-w-5xl h-[80vh] rounded-xl border border-zinc-700/80 shadow-2xl flex flex-col overflow-hidden select-text" style="background-color: #0d0f14;">
+      <div class="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between text-xs select-none shrink-0" style="background-color: #141720;">
+        <div class="flex items-center gap-2 min-w-0 mr-4">
+          <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+          <span class="text-xs font-semibold text-zinc-300 truncate">$ ss -tlpn | grep -E ':80|:443'</span>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <span class="text-xs text-emerald-400 font-medium">状态: 0 (成功)</span>
+          <span class="text-xs text-zinc-400 font-mono">耗时: 28ms</span>
+          <button onclick="copyText('LISTEN 0 511 0.0.0.0:80\nLISTEN 0 511 0.0.0.0:443')" class="p-1.5 rounded cursor-pointer hover:bg-zinc-800 text-zinc-300 flex items-center gap-1 text-xs">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <span>复制输出</span>
+          </button>
+          <button onclick="closeMiniTermModal()" class="p-1.5 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="p-4 overflow-y-auto whitespace-pre-wrap break-all flex-1 font-mono leading-relaxed text-zinc-200" style="font-size: 13px; background-color: #0a0c10;">
+LISTEN 0 511 0.0.0.0:<span class="text-emerald-400 font-semibold">80</span>   0.0.0.0:* users:(("docker-proxy",pid=842))
+LISTEN 0 511 0.0.0.0:<span class="text-emerald-400 font-semibold">443</span>  0.0.0.0:* users:(("docker-proxy",pid=856))
       </div>
     </div>
   </div>
 
+  <!-- 交互交互脚本 (与实际实现 1:1 对齐) -->
   <script>
-    function toggleModal(id) {
-      const el = document.getElementById(id);
+    let currentFontSize = 14;
+    let isAiWide = false;
+
+    function setTheme(themeId) {
+      document.body.className = '';
+      if (themeId !== 'aliyun') {
+        document.body.classList.add('theme-' + themeId);
+      }
+      document.querySelectorAll('.theme-indicator').forEach(el => el.classList.add('hidden'));
+      const activeIndicator = document.querySelector('.theme-indicator-' + themeId);
+      if (activeIndicator) activeIndicator.classList.remove('hidden');
+      const themeMenu = document.getElementById('theme-menu');
+      if (themeMenu) themeMenu.classList.add('hidden');
+    }
+
+    function toggleThemeMenu() {
+      const el = document.getElementById('theme-menu');
       if (el) el.classList.toggle('hidden');
     }
-    function toggleSidebar(id) {
-      if (id === 'ai-panel') {
-        const el = document.getElementById('sidebar-ai');
-        if (el) el.classList.toggle('hidden');
+
+    function toggleSessionPool() {
+      const el = document.getElementById('session-pool-menu');
+      if (el) el.classList.toggle('hidden');
+    }
+
+    function toggleServerSidebar() {
+      const sb = document.getElementById('sidebar-servers');
+      if (sb) sb.classList.toggle('hidden');
+    }
+
+    function toggleAiPanel() {
+      const panel = document.getElementById('sidebar-ai');
+      const btn = document.getElementById('btn-ai-toggle');
+      if (panel) {
+        panel.classList.toggle('hidden');
+        const isOpen = !panel.classList.contains('hidden');
+        if (btn) {
+          btn.className = isOpen
+            ? 'px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-semibold cursor-pointer transition-colors bg-[#23d18b] text-[#064e3b]'
+            : 'px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-semibold cursor-pointer transition-colors opacity-70 hover:opacity-100';
+        }
       }
     }
+
+    function toggleAiWide() {
+      const panel = document.getElementById('sidebar-ai');
+      if (!panel) return;
+      isAiWide = !isAiWide;
+      if (isAiWide) {
+        panel.classList.remove('w-96');
+        panel.classList.add('w-[560px]');
+      } else {
+        panel.classList.remove('w-[560px]');
+        panel.classList.add('w-96');
+      }
+    }
+
+    function toggleSftpDrawer() {
+      const drawer = document.getElementById('drawer-sftp');
+      if (drawer) drawer.classList.toggle('hidden');
+    }
+
+    function openSftpEditor(fileName) {
+      document.getElementById('sftp-file-list').classList.add('hidden');
+      document.getElementById('sftp-editor').classList.remove('hidden');
+    }
+
+    function closeSftpEditor() {
+      document.getElementById('sftp-editor').classList.add('hidden');
+      document.getElementById('sftp-file-list').classList.remove('hidden');
+    }
+
+    function adjustFontSize(delta) {
+      setFontSize(currentFontSize + delta);
+    }
+
+    function setFontSize(val) {
+      currentFontSize = Math.max(11, Math.min(22, parseInt(val)));
+      document.documentElement.style.setProperty('--term-font-size', currentFontSize + 'px');
+      document.getElementById('current-font-size-label').innerText = currentFontSize + 'px';
+      const range = document.getElementById('range-font-size');
+      if (range) range.value = currentFontSize;
+      const sliderVal = document.getElementById('slider-font-size-val');
+      if (sliderVal) sliderVal.innerText = currentFontSize + 'px';
+    }
+
+    function openServerModal(name) {
+      const modal = document.getElementById('modal-server');
+      const title = document.getElementById('modal-server-title');
+      const nameInput = document.getElementById('srv-name');
+      if (name) {
+        title.innerText = '编辑主机配置';
+        nameInput.value = name;
+      } else {
+        title.innerText = '新建主机配置';
+        nameInput.value = 'prod-04';
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeServerModal() {
+      document.getElementById('modal-server').classList.add('hidden');
+    }
+
+    function saveServerConfig() {
+      alert('主机配置已保存至本地 SQLite 数据库');
+      closeServerModal();
+    }
+
+    function openSettingsModal() {
+      document.getElementById('modal-settings').classList.remove('hidden');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('modal-settings').classList.add('hidden');
+    }
+
+    function switchSettingsTab(tab) {
+      const panelApp = document.getElementById('panel-settings-appearance');
+      const panelAi = document.getElementById('panel-settings-ai');
+      const btnApp = document.getElementById('btn-tab-appearance');
+      const btnAi = document.getElementById('btn-tab-ai');
+
+      if (tab === 'appearance') {
+        panelApp.classList.remove('hidden');
+        panelAi.classList.add('hidden');
+        btnApp.className = 'w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer bg-white/10 text-emerald-400';
+        btnAi.className = 'w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer opacity-60 hover:opacity-100';
+      } else {
+        panelApp.classList.add('hidden');
+        panelAi.classList.remove('hidden');
+        btnAi.className = 'w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer bg-white/10 text-emerald-400';
+        btnApp.className = 'w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-left transition-colors cursor-pointer opacity-60 hover:opacity-100';
+      }
+    }
+
+    function testAiConn() {
+      const badge = document.getElementById('ai-test-badge');
+      badge.innerText = '正在测速...';
+      badge.classList.remove('hidden');
+      setTimeout(() => {
+        badge.innerText = '连接成功 (HTTP 200, 耗时: 118ms)';
+      }, 400);
+    }
+
+    function switchTab(tabId, title, type) {
+      document.querySelectorAll('.tab-item').forEach(el => {
+        el.style.backgroundColor = 'transparent';
+        el.style.borderColor = 'transparent';
+        el.classList.add('opacity-70');
+      });
+      const current = document.getElementById(tabId);
+      if (current) {
+        current.style.backgroundColor = 'var(--active-tab-bg)';
+        current.style.borderColor = 'var(--accent-color)';
+        current.classList.remove('opacity-70');
+      }
+      document.getElementById('active-session-title').innerText = title;
+    }
+
+    function closeTab(tabId) {
+      const el = document.getElementById(tabId);
+      if (el) el.remove();
+    }
+
+    function addLocalTab() {
+      alert('已启动本地原生 Shell (zsh/bash)');
+    }
+
+    function addTab(srv) {
+      alert('已为 ' + srv + ' 新建会话标签');
+    }
+
+    function toggleThinkingBody() {
+      const body = document.getElementById('thinking-body');
+      const icon = document.getElementById('icon-thinking-chevron');
+      if (body) {
+        body.classList.toggle('hidden');
+      }
+    }
+
+    function approveTool(isAllowed) {
+      const card = document.getElementById('card-pending-tool');
+      if (card) {
+        card.innerHTML = isAllowed
+          ? '<div class="flex items-center gap-1.5 text-emerald-400 font-medium py-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>已授权执行: ufw status verbose</span></div>'
+          : '<div class="flex items-center gap-1.5 text-red-400 font-medium py-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg><span>已拒绝执行该指令</span></div>';
+      }
+    }
+
+    function openMiniTermModal() {
+      document.getElementById('modal-mini-term').classList.remove('hidden');
+    }
+
+    function closeMiniTermModal() {
+      document.getElementById('modal-mini-term').classList.add('hidden');
+    }
+
+    function clearTerminalScreen() {
+      const vp = document.getElementById('terminal-viewport');
+      if (vp) {
+        vp.innerHTML = '<div class="flex items-center"><span class="text-emerald-400 font-semibold">root@prod-01</span><span class="opacity-50">:</span><span class="text-blue-400">~</span><span class="opacity-80"># </span><span class="inline-block w-[2px] h-4 bg-zinc-200 ml-1 cursor-blink"></span></div>';
+      }
+    }
+
+    function copyTerminalText() {
+      navigator.clipboard.writeText(document.getElementById('terminal-viewport').innerText);
+      alert('终端内容已复制至剪贴板');
+    }
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt);
+      alert('内容已复制');
+    }
+
+    function clearAiChat() {
+      const c = document.getElementById('ai-chat-container');
+      if (c) {
+        c.innerHTML = '<div class="flex flex-col items-center justify-center h-full space-y-2 text-center p-4 opacity-50"><p class="font-medium text-xs">智能运维 Agent 就绪</p><p class="text-[11px]">输入任务目标，Agent 将自主规划并调用工具执行诊断。</p></div>';
+      }
+    }
+
+    function sendAiMsg() {
+      const input = document.getElementById('ai-input');
+      if (!input || !input.value.trim()) return;
+      alert('模拟发送指令给 Agent: ' + input.value);
+      input.value = '';
+    }
+
+    // 点击空白处关闭浮层
+    document.addEventListener('click', (e) => {
+      const themeMenu = document.getElementById('theme-menu');
+      if (themeMenu && !themeMenu.contains(e.target) && !e.target.closest('button[onclick*="toggleThemeMenu"]')) {
+        themeMenu.classList.add('hidden');
+      }
+      const sessionMenu = document.getElementById('session-pool-menu');
+      if (sessionMenu && !sessionMenu.contains(e.target) && !e.target.closest('button[onclick*="toggleSessionPool"]')) {
+        sessionMenu.classList.add('hidden');
+      }
+    });
   </script>
 </body>
 </html>
