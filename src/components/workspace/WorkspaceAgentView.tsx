@@ -72,9 +72,7 @@ export const WorkspaceAgentView: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const visibleServers = selectedHostIds.length > 0
-    ? servers.filter((s) => selectedHostIds.includes(s.id))
-    : servers;
+  const visibleServers = servers.filter((s) => selectedHostIds.includes(s.id));
 
   // 自动滚动至最新消息
   useEffect(() => {

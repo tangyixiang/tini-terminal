@@ -217,8 +217,11 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 3. 闭环验证原则:
    - 任何部署、重启或变更操作完成后，必须主动调用 terminal_exec 进行状态闭环验证 (如检查 docker ps、ss -lntp、systemctl status、curl 探测等)，确保真实生效后才向用户确认。
 4. 极致简洁专业:
-   - 交互文案直观精炼、直奔主题，杜绝解释性套话、过程性废话和无意义寒暄。
-   - 严禁输出任何 Emoji 表情符号。`;
+   - 交互文案直观精炼、直奔主题，杜绝冗长过程性废话和无意义寒暄。
+   - 严禁输出任何 Emoji 表情符号。
+5. 必须输出最终结论报告（结论闭环）:
+   - 在所有工具调用执行完毕后，必须在最终回复文本中对执行结果给出清晰精炼的结论与分析报告。
+   - 明确指出服务状态、健康检查结果或配置变更情况。严禁仅调用工具而不输出任何文字结论，严禁静默空回复！`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -288,7 +291,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
     toolCalls: toolCallItems,
   });
 
-  const maxLoops = 15;
+  const maxLoops = 20;
   let loopCount = 0;
 
   let accumulatedThinking = '';
@@ -441,7 +444,44 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         }));
 
       if (finalToolCalls.length === 0) {
-        // 无更多工具调用，会话闭环结束
+        // 无更多工具调用
+        // 如果已执行过工具但正文仍然为空，且未中止，显式请求模型输出结论
+        if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
+          conversation.push({
+            role: 'user',
+            content: '所有运维步骤已执行完毕，请结合上述实际输出，向用户给出清晰精炼的最终执行结论与分析报告。',
+          });
+          let summaryBuffer = '';
+          loopThinking = '';
+          loopContent = '';
+          isInThinkTag = false;
+          await streamChatCompletion(
+            baseUrl,
+            apiKey || '',
+            {
+              model,
+              messages: conversation,
+              temperature: 0.2,
+              stream: true,
+            },
+            signal,
+            (chunkText) => {
+              summaryBuffer += chunkText;
+              const lines = summaryBuffer.split('\n');
+              summaryBuffer = lines.pop() || '';
+              handleLines(lines);
+            },
+            tabId
+          );
+          if (summaryBuffer.trim()) {
+            handleLines([summaryBuffer.trim()]);
+          }
+          if (loopContent) {
+            accumulatedContent = accumulatedContent
+              ? `${accumulatedContent}\n\n${loopContent}`
+              : loopContent;
+          }
+        }
         break;
       }
 
@@ -581,6 +621,29 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           content: toolCallItem.result || '(无输出)',
         });
       }
+    }
+
+    // 最终兜底：确保界面绝不出现无结论的情况
+    if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
+      const hasFailed = toolCallItems.some((t) => t.status === 'failed' || t.status === 'rejected');
+      const lines: string[] = [];
+      lines.push(hasFailed ? '部分操作未正常完成，请查看上方详细输出：' : '所有运维操作已执行完毕，状态正常：');
+      for (const tc of toolCallItems) {
+        if (tc.name === 'terminal_exec') {
+          lines.push(`- 执行指令 \`${tc.args.command || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
+        } else if (tc.name === 'file_write') {
+          lines.push(`- 写入文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
+        } else if (tc.name === 'file_read') {
+          lines.push(`- 读取文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
+        } else {
+          lines.push(`- 工具 \`${tc.name}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
+        }
+      }
+      accumulatedContent = lines.join('\n');
+      agentStore.updateLastMessage(tabId, (m) => ({
+        ...m,
+        content: accumulatedContent,
+      }));
     }
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {

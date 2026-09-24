@@ -186,24 +186,19 @@ export async function runWorkspaceAgentTask(
 
   // 1. 获取工作区可见主机集群列表
   const allServers = serverStore.servers;
-  const fallbackServers = allServers.length > 0
-    ? allServers
-    : [
-        {
-          id: 'local',
-          name: '本地终端',
-          host: '127.0.0.1',
-          port: 22,
-          username: 'local',
-          auth_type: 'password' as const,
-          created_at: 0,
-        },
-      ];
   const selectedHostIds = wsStore.selectedHostIds;
-  const matchedServers = selectedHostIds.length > 0
-    ? fallbackServers.filter((s) => selectedHostIds.includes(s.id))
-    : fallbackServers;
-  const visibleServers = matchedServers.length > 0 ? matchedServers : fallbackServers;
+  const visibleServers = allServers.filter((s) => selectedHostIds.includes(s.id));
+
+  // 2. 检查是否有勾选目标主机
+  if (visibleServers.length === 0) {
+    wsStore.addMessage(wsId, {
+      id: 'msg-' + Date.now(),
+      role: 'assistant',
+      content: '当前工作区未勾选任何目标主机，请在左侧主机列表中勾选至少一台目标主机后再下达任务。',
+      timestamp: Date.now(),
+    });
+    return;
+  }
 
   // 3. 获取历史消息
   const agentState = wsStore.getAgentState(wsId);
@@ -247,8 +242,11 @@ ${hostDescriptions}
    - 严禁在回复中凭空编造执行结果，所有查询、探测、文件操作必须真实调用工具。
    - 涉及跨机同步或服务部署时，部署后必须主动在目标主机调用 host_exec 验证配置语法与服务状态。
 3. 极致简洁专业:
-   - 回复直接提炼关键事实与执行报告，严禁任何废话、解释性套话。
-   - 严禁输出任何 Emoji 表情符号。`;
+   - 回复直接提炼关键事实与执行报告，严禁冗长过程性废话。
+   - 严禁输出任何 Emoji 表情符号。
+4. 必须输出最终结论报告（结论闭环）:
+   - 在所有多机工具调用执行完毕后，必须在最终回复文本中向用户输出多机协同的最终结论与分析报告。
+   - 明确提炼各主机的执行状态、配置对比差异或服务状态。严禁仅调用工具而不输出任何总结结论，严禁静默空答！`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -471,7 +469,44 @@ ${hostDescriptions}
         }));
 
       if (finalToolCalls.length === 0) {
-        // 完成最终输出，跳出循环
+        // 无更多工具调用
+        // 如果已执行过工具但正文仍然为空，且未中止，显式请求模型输出多机结论
+        if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
+          conversation.push({
+            role: 'user',
+            content: '所有跨机运维步骤已执行完毕，请结合上述实际输出，向用户给出清晰精炼的多机执行结论与分析报告。',
+          });
+          let summaryBuffer = '';
+          loopThinking = '';
+          loopContent = '';
+          isInThinkTag = false;
+          await streamChatCompletion(
+            baseUrl,
+            apiKey || '',
+            {
+              model,
+              messages: conversation,
+              temperature: 0.2,
+              stream: true,
+            },
+            signal,
+            (chunkText) => {
+              summaryBuffer += chunkText;
+              const lines = summaryBuffer.split('\n');
+              summaryBuffer = lines.pop() || '';
+              handleLines(lines);
+            },
+            wsId
+          );
+          if (summaryBuffer.trim()) {
+            handleLines([summaryBuffer.trim()]);
+          }
+          if (loopContent) {
+            accumulatedContent = accumulatedContent
+              ? `${accumulatedContent}\n\n${loopContent}`
+              : loopContent;
+          }
+        }
         break;
       }
 
@@ -621,6 +656,32 @@ ${hostDescriptions}
           content: toolCallItem.result || '(无输出)',
         });
       }
+    }
+
+    // 最终兜底：确保工作区界面绝不出现无结论的情况
+    if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
+      const hasFailed = toolCallItems.some((t) => t.status === 'failed' || t.status === 'rejected');
+      const lines: string[] = [];
+      lines.push(hasFailed ? '部分跨机操作未正常完成，请查看上方详细输出：' : '多机协同运维任务已执行完毕，状态正常：');
+      for (const tc of toolCallItems) {
+        const hostTag = tc.hostName ? `[${tc.hostName}] ` : '';
+        if (tc.name === 'host_exec') {
+          lines.push(`- ${hostTag}执行指令 \`${tc.args.command || ''}\`：${tc.status === 'success' ? '完成' : '异常'}`);
+        } else if (tc.name === 'host_file_write') {
+          lines.push(`- ${hostTag}写入文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '失败'}`);
+        } else if (tc.name === 'host_file_read') {
+          lines.push(`- ${hostTag}读取文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '失败'}`);
+        } else if (tc.name === 'host_transfer') {
+          lines.push(`- 跨机同步 \`${tc.args.src_path}\` -> \`${tc.args.dst_path}\`：${tc.status === 'success' ? '完成' : '失败'}`);
+        } else {
+          lines.push(`- ${hostTag}工具 \`${tc.name}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
+        }
+      }
+      accumulatedContent = lines.join('\n');
+      wsStore.updateLastMessage(wsId, (m) => ({
+        ...m,
+        content: accumulatedContent,
+      }));
     }
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {
