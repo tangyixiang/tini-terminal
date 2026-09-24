@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { AiSettings, AiProviderConfig, PermissionMode } from '../types';
+import type { AiSettings, AiProviderConfig, PermissionMode, AppPrimaryMode } from '../types';
 import { BUILTIN_THEMES, type ThemeConfig, type ThemeId } from '../types/theme';
 import { useAgentStore } from './useAgentStore';
 
 interface SettingsState {
   settings: AiSettings;
   themeId: ThemeId;
+  primaryMode: AppPrimaryMode;
   isSettingsModalOpen: boolean;
   isServerModalOpen: boolean;
   isSftpDrawerOpen: boolean;
@@ -16,6 +17,7 @@ interface SettingsState {
   aiPanelWidth: number;
   terminalFontSize: number;
   editingServerId: string | null;
+  setPrimaryMode: (mode: AppPrimaryMode) => void;
   fetchSettings: () => Promise<void>;
   saveSettings: (partial: Partial<AiSettings>) => Promise<void>;
   getActiveProviderConfig: () => AiProviderConfig | undefined;
@@ -54,6 +56,7 @@ const defaultSettings: AiSettings = {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: defaultSettings,
   themeId: 'aliyun',
+  primaryMode: 'terminal',
   isSettingsModalOpen: false,
   isServerModalOpen: false,
   isSftpDrawerOpen: false,
@@ -63,6 +66,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   aiPanelWidth: 360,
   terminalFontSize: 14,
   editingServerId: null,
+
+  setPrimaryMode: (mode: AppPrimaryMode) => set({ primaryMode: mode }),
 
   getActiveProviderConfig: () => {
     const { settings } = get();

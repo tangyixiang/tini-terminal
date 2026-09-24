@@ -20,6 +20,28 @@ pub struct ServerRecord {
     pub created_at: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkspaceRecord {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub host_ids: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub prompt: String,
+    pub status: String,
+    pub plan_json: Option<String>,
+    pub result_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 pub struct StorageManager {
     db_path: PathBuf,
 }
@@ -89,8 +111,53 @@ impl StorageManager {
                 content TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_hosts (
+                workspace_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (workspace_id, host_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL,
+                plan_json TEXT,
+                result_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
             ",
         )?;
+
+        // Seed initial default workspaces if none exists
+        let ws_count: i64 = conn.query_row(
+            "SELECT count(*) FROM workspaces",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        if ws_count == 0 {
+            let now = chrono::Utc::now().timestamp_millis();
+            let _ = conn.execute(
+                "INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["ws-default-prod", "Production (生产集群)", "核心生产服务器集群", now, now],
+            );
+            let _ = conn.execute(
+                "INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["ws-default-staging", "Staging (预发集群)", "预发布与测试验证环境", now, now],
+            );
+        }
 
         // Seed initial default settings if not exists
         let has_ai: i64 = conn.query_row(
@@ -212,6 +279,170 @@ impl StorageManager {
             )?;
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, created_at, updated_at FROM workspaces ORDER BY created_at ASC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok((id, name, description, created_at, updated_at)) = r {
+                let host_ids = self.get_workspace_hosts(&id).unwrap_or_default();
+                list.push(WorkspaceRecord {
+                    id,
+                    name,
+                    description,
+                    host_ids,
+                    created_at,
+                    updated_at,
+                });
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn save_workspace(&self, ws: &WorkspaceRecord) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO workspaces (id, name, description, created_at, updated_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5) 
+             ON CONFLICT(id) DO UPDATE SET 
+                name = excluded.name, 
+                description = excluded.description, 
+                updated_at = excluded.updated_at",
+            params![ws.id, ws.name, ws.description, ws.created_at, ws.updated_at],
+        )?;
+
+        self.set_workspace_hosts(&ws.id, &ws.host_ids)?;
+        Ok(())
+    }
+
+    pub fn delete_workspace(&self, id: &str) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
+        tx.execute("DELETE FROM workspace_hosts WHERE workspace_id = ?1", params![id])?;
+        tx.execute("DELETE FROM tasks WHERE workspace_id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_workspace_hosts(&self, workspace_id: &str) -> Result<Vec<String>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT host_id FROM workspace_hosts WHERE workspace_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![workspace_id], |row| row.get(0))?;
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(host_id) = r {
+                list.push(host_id);
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn set_workspace_hosts(&self, workspace_id: &str, host_ids: &[String]) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM workspace_hosts WHERE workspace_id = ?1", params![workspace_id])?;
+        let now = chrono::Utc::now().timestamp_millis();
+        for hid in host_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO workspace_hosts (workspace_id, host_id, created_at) VALUES (?1, ?2, ?3)",
+                params![workspace_id, hid, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn list_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<TaskRecord>> {
+        let conn = self.get_connection()?;
+        let mut list = Vec::new();
+        if let Some(ws_id) = workspace_id {
+            let mut stmt = conn.prepare(
+                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at 
+                 FROM tasks WHERE workspace_id = ?1 ORDER BY created_at DESC LIMIT 50",
+            )?;
+            let rows = stmt.query_map(params![ws_id], |row| {
+                Ok(TaskRecord {
+                    id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    prompt: row.get(2)?,
+                    status: row.get(3)?,
+                    plan_json: row.get(4)?,
+                    result_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })?;
+            for r in rows {
+                if let Ok(item) = r {
+                    list.push(item);
+                }
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at 
+                 FROM tasks ORDER BY created_at DESC LIMIT 50",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(TaskRecord {
+                    id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    prompt: row.get(2)?,
+                    status: row.get(3)?,
+                    plan_json: row.get(4)?,
+                    result_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })?;
+            for r in rows {
+                if let Ok(item) = r {
+                    list.push(item);
+                }
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn save_task(&self, task: &TaskRecord) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO tasks (id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                plan_json = excluded.plan_json,
+                result_json = excluded.result_json,
+                updated_at = excluded.updated_at",
+            params![
+                task.id,
+                task.workspace_id,
+                task.prompt,
+                task.status,
+                task.plan_json,
+                task.result_json,
+                task.created_at,
+                task.updated_at
+            ],
+        )?;
         Ok(())
     }
 }

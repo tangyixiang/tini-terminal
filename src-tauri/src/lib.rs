@@ -1,16 +1,22 @@
 mod agent;
 mod pty;
 mod safety;
+mod session;
 mod sftp;
 mod ssh;
 mod storage;
+mod task;
+mod workspace;
 
 use agent::{AgentService, AiStreamEvent, StreamAiChatRequest, TestAiRequest, TestAiResponse};
 use pty::{PtyManager, TerminalOutputPayload};
 use safety::{SafetyCheckResult, SafetyManager};
+use session::{SessionContext, SessionInfo, SessionManager};
 use sftp::{SftpListResult, SftpManager};
 use ssh::{ExecStreamPayload, SshConnectOptions, SshExecResult, SshManager};
 use storage::{ServerRecord, StorageManager};
+use task::{TaskPlan, TaskManager};
+use workspace::{Workspace, WorkspaceManager};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,11 +24,14 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 pub struct AppState {
-    pub storage: StorageManager,
+    pub storage: Arc<StorageManager>,
     pub pty: PtyManager,
     pub ssh: SshManager,
     pub safety: SafetyManager,
     pub agent: AgentService,
+    pub sessions: SessionManager,
+    pub workspaces: WorkspaceManager,
+    pub tasks: TaskManager,
 }
 
 // ---------------- 服务器管理命令 ----------------
@@ -484,14 +493,86 @@ fn abort_ai_chat(state: State<Arc<AppState>>, request_id: String) -> Result<(), 
     Ok(())
 }
 
+// ---------------- 工作区管理命令 ----------------
+
+#[tauri::command]
+fn list_workspaces(state: State<Arc<AppState>>) -> Result<Vec<Workspace>, String> {
+    state.workspaces.list()
+}
+
+#[tauri::command]
+fn save_workspace(state: State<Arc<AppState>>, workspace: Workspace) -> Result<(), String> {
+    state.workspaces.save(workspace)
+}
+
+#[tauri::command]
+fn delete_workspace(state: State<Arc<AppState>>, id: String) -> Result<(), String> {
+    state.workspaces.delete(&id)
+}
+
+#[tauri::command]
+fn get_workspace_hosts(state: State<Arc<AppState>>, workspace_id: String) -> Result<Vec<String>, String> {
+    state.workspaces.get_hosts(&workspace_id)
+}
+
+#[tauri::command]
+fn set_workspace_hosts(
+    state: State<Arc<AppState>>,
+    workspace_id: String,
+    host_ids: Vec<String>,
+) -> Result<(), String> {
+    state.workspaces.set_hosts(&workspace_id, &host_ids)
+}
+
+// ---------------- 会话与多机任务命令 ----------------
+
+#[tauri::command]
+fn get_session_context(state: State<Arc<AppState>>, session_id: String) -> Option<SessionContext> {
+    state.sessions.get_context(&session_id)
+}
+
+#[tauri::command]
+fn list_sessions(state: State<Arc<AppState>>) -> Vec<SessionInfo> {
+    state.sessions.list_sessions()
+}
+
+#[tauri::command]
+fn list_workspace_tasks(
+    state: State<Arc<AppState>>,
+    workspace_id: Option<String>,
+) -> Result<Vec<TaskPlan>, String> {
+    state.tasks.list_tasks(workspace_id.as_deref())
+}
+
+#[tauri::command]
+async fn run_workspace_task(
+    state: State<'_, Arc<AppState>>,
+    workspace_id: String,
+    prompt: String,
+    target_host_ids: Vec<String>,
+    command: String,
+) -> Result<TaskPlan, String> {
+    let tasks = state.tasks.clone();
+    tasks.run_workspace_task(&workspace_id, &prompt, &target_host_ids, &command).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let storage = Arc::new(StorageManager::new());
+    let ssh = SshManager::new();
+    let sessions = SessionManager::new();
+    let workspaces = WorkspaceManager::new(Arc::clone(&storage));
+    let tasks = TaskManager::new(Arc::clone(&storage), ssh.clone());
+
     let app_state = Arc::new(AppState {
-        storage: StorageManager::new(),
+        storage,
         pty: PtyManager::new(),
-        ssh: SshManager::new(),
+        ssh,
         safety: SafetyManager::new(),
         agent: AgentService::new(),
+        sessions,
+        workspaces,
+        tasks,
     });
 
     tauri::Builder::default()
@@ -537,7 +618,16 @@ pub fn run() {
             log_debug,
             drag_window,
             toggle_maximize_window,
-            set_window_theme
+            set_window_theme,
+            list_workspaces,
+            save_workspace,
+            delete_workspace,
+            get_workspace_hosts,
+            set_workspace_hosts,
+            get_session_context,
+            list_sessions,
+            list_workspace_tasks,
+            run_workspace_task
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

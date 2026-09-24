@@ -5,8 +5,8 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { AGENT_TOOLS, checkSafety, executeToolCall } from './tools';
 import type { ToolCallItem } from '../../types';
 
-let currentAbortController: AbortController | null = null;
-let currentRequestId: string | null = null;
+const abortControllers: Record<string, AbortController> = {};
+const currentRequestIds: Record<string, string> = {};
 
 interface StreamEventPayload {
   event_type: 'chunk' | 'error' | 'done';
@@ -19,17 +19,18 @@ async function streamChatCompletion(
   body: Record<string, unknown>,
   signal: AbortSignal,
   onChunk: (chunkText: string) => void,
+  tabId?: string,
 ): Promise<void> {
   if (window.__TAURI_INTERNALS__) {
     const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
-    currentRequestId = requestId;
+    if (tabId) currentRequestIds[tabId] = requestId;
 
     return new Promise<void>((resolve, reject) => {
       const channel = new Channel<StreamEventPayload>();
 
       const abortHandler = () => {
         invoke('abort_ai_chat', { requestId }).catch(() => {});
-        currentRequestId = null;
+        if (tabId) delete currentRequestIds[tabId];
         resolve();
       };
 
@@ -48,11 +49,11 @@ async function streamChatCompletion(
           onChunk(event.data);
         } else if (event.event_type === 'error') {
           signal.removeEventListener('abort', abortHandler);
-          currentRequestId = null;
+          if (tabId) delete currentRequestIds[tabId];
           reject(new Error(event.data || '大模型网络请求异常'));
         } else if (event.event_type === 'done') {
           signal.removeEventListener('abort', abortHandler);
-          currentRequestId = null;
+          if (tabId) delete currentRequestIds[tabId];
           resolve();
         }
       };
@@ -67,7 +68,7 @@ async function streamChatCompletion(
         channel,
       }).catch((err) => {
         signal.removeEventListener('abort', abortHandler);
-        currentRequestId = null;
+        if (tabId) delete currentRequestIds[tabId];
         reject(new Error(err?.toString() || '启动大模型网络请求失败'));
       });
     });
@@ -108,23 +109,31 @@ async function streamChatCompletion(
   }
 }
 
-export function abortAgentTask(): void {
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-  }
-  if (currentRequestId && window.__TAURI_INTERNALS__) {
-    invoke('abort_ai_chat', { requestId: currentRequestId }).catch(() => {});
-    currentRequestId = null;
-  }
-  const agentStore = useAgentStore.getState();
-  if (agentStore.approvalResolver) {
-    agentStore.approvalResolver(false);
-  }
-  agentStore.setPendingApproval(null, null);
-  agentStore.setIsThinking(false);
+export function abortAgentTask(targetTabId?: string): void {
+  const terminalStore = useTerminalStore.getState();
+  const tabId = targetTabId || terminalStore.activeTabId || 'global';
 
-  agentStore.updateLastMessage((m) => {
+  const ctrl = abortControllers[tabId];
+  if (ctrl) {
+    ctrl.abort();
+    delete abortControllers[tabId];
+  }
+
+  const reqId = currentRequestIds[tabId];
+  if (reqId && window.__TAURI_INTERNALS__) {
+    invoke('abort_ai_chat', { requestId: reqId }).catch(() => {});
+    delete currentRequestIds[tabId];
+  }
+
+  const agentStore = useAgentStore.getState();
+  const session = agentStore.getSessionState(tabId);
+  if (session.approvalResolver) {
+    session.approvalResolver(false);
+  }
+  agentStore.setPendingApproval(tabId, null, null);
+  agentStore.setIsThinking(tabId, false);
+
+  agentStore.updateLastMessage(tabId, (m) => {
     const abortNote = '[任务已手动中止]';
     if (!m.content?.includes(abortNote)) {
       return {
@@ -143,10 +152,10 @@ function isReadOnlyCommand(cmd: string): boolean {
   if (/>|>>|\|\s*(tee|dd)\b/i.test(trimmed)) return false;
   // 匹配状态修改与变更命令
   const modifyingKeywords = [
-    'rm', 'mv', 'cp', 'chmod', 'chown', 'mkdir', 'rmdir', 'touch', 'truncate',
-    'sed -i', 'apt', 'yum', 'dnf', 'pacman', 'apk', 'pip', 'npm', 'yarn', 'pnpm',
-    'docker run', 'docker rm', 'docker stop', 'docker start', 'docker restart', 'docker compose', 'docker build',
-    'systemctl start', 'systemctl stop', 'systemctl restart', 'systemctl enable', 'systemctl disable',
+    'rm', 'mv', 'cp', 'chmod', 'chown', 'chgrp', 'mkdir', 'touch', 'truncate',
+    'sed -i', 'useradd', 'usermod', 'userdel', 'groupadd', 'groupdel', 'passwd',
+    'apt', 'apt-get', 'yum', 'dnf', 'pacman', 'apk', 'systemctl start',
+    'systemctl stop', 'systemctl restart', 'systemctl enable', 'systemctl disable',
     'service', 'kill', 'pkill', 'killall', 'reboot', 'shutdown', 'poweroff', 'mkfs', 'fdisk', 'dd',
     'git commit', 'git push', 'git checkout', 'git reset', 'git clean',
   ];
@@ -160,35 +169,38 @@ function isReadOnlyCommand(cmd: string): boolean {
   return true;
 }
 
-export async function runAgentTask(userPrompt: string): Promise<void> {
-  if (currentAbortController) {
-    abortAgentTask();
+export async function runAgentTask(userPrompt: string, targetTabId?: string): Promise<void> {
+  const terminalStore = useTerminalStore.getState();
+  const tabId = targetTabId || terminalStore.activeTabId || 'global';
+
+  if (abortControllers[tabId]) {
+    abortAgentTask(tabId);
   }
 
   const abortCtrl = new AbortController();
-  currentAbortController = abortCtrl;
+  abortControllers[tabId] = abortCtrl;
   const signal = abortCtrl.signal;
 
   const agentStore = useAgentStore.getState();
   const settingsStore = useSettingsStore.getState();
-  const terminalStore = useTerminalStore.getState();
 
-  const activeTab = terminalStore.tabs.find((t) => t.id === terminalStore.activeTabId);
+  const activeTab = terminalStore.tabs.find((t) => t.id === tabId);
   const sessionId = activeTab?.sessionId || 'local-session';
 
-  // 1. 获取现有历史消息（最多保留最近 20 条）
-  const historyMessages = agentStore.messages.slice(-20);
+  // 1. 获取该会话专属历史消息（最多保留最近 20 条）
+  const sessionState = agentStore.getSessionState(tabId);
+  const historyMessages = sessionState.messages.slice(-20);
 
-  // 2. 添加用户消息到 store
+  // 2. 添加用户消息到当前会话
   const userMsgId = 'msg-' + Date.now();
-  agentStore.addMessage({
+  agentStore.addMessage(tabId, {
     id: userMsgId,
     role: 'user',
     content: userPrompt,
     timestamp: Date.now(),
   });
 
-  agentStore.setIsThinking(true);
+  agentStore.setIsThinking(tabId, true);
 
   // 3. 准备系统提示词与历史记录
   const systemPrompt = `你是一个具备完整工具调用执行能力的专业 Linux 运维与 SRE Agent 助手。
@@ -212,7 +224,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
     { role: 'system', content: systemPrompt },
   ];
 
-  // 导入最近历史消息（完整保留 tool_calls 与 tool 返回结果，避免多轮丢失工具状态）
+  // 导入最近历史消息
   for (const m of historyMessages) {
     if (m.role === 'user') {
       if (m.content) {
@@ -268,7 +280,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
   const assistantMsgId = 'msg-' + (Date.now() + 1);
   const toolCallItems: ToolCallItem[] = [];
 
-  agentStore.addMessage({
+  agentStore.addMessage(tabId, {
     id: assistantMsgId,
     role: 'assistant',
     content: '',
@@ -300,82 +312,55 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith(':')) continue;
-          if (trimmed === 'data: [DONE]') continue;
+          if (!trimmed.startsWith('data:')) continue;
+          const jsonStr = trimmed.replace(/^data:\s*/, '');
+          if (jsonStr === '[DONE]') continue;
 
-          if (trimmed.startsWith('data: ')) {
-            const jsonStr = trimmed.slice(6);
-            try {
-              const chunk = JSON.parse(jsonStr);
-              const choice = chunk.choices?.[0];
-              if (!choice) continue;
-              const delta = choice.delta;
-              if (!delta) continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const delta = parsed.choices?.[0]?.delta;
+            if (!delta) continue;
 
-              // 1. 解析思考推理字段 (DeepSeek reasoning_content / reasoning / thinking)
-              const reasoningChunk = delta.reasoning_content || delta.reasoning || delta.thinking;
-              if (reasoningChunk) {
-                loopThinking += reasoningChunk;
-                updated = true;
+            // 深度思考标签识别与提取
+            if (delta.reasoning_content) {
+              loopThinking += delta.reasoning_content;
+              updated = true;
+            } else if (delta.content) {
+              let text = delta.content;
+              if (text.includes('<think>')) {
+                isInThinkTag = true;
+                text = text.replace('<think>', '');
               }
-
-              // 2. 解析正文（同时兼容内联 <think>...</think> 标签）
-              if (delta.content) {
-                let remaining = delta.content;
-                while (remaining.length > 0) {
-                  if (!isInThinkTag) {
-                    const startIdx = remaining.indexOf('<think>');
-                    if (startIdx !== -1) {
-                      const textBefore = remaining.slice(0, startIdx);
-                      if (textBefore) {
-                        loopContent += textBefore;
-                        updated = true;
-                      }
-                      isInThinkTag = true;
-                      remaining = remaining.slice(startIdx + 7);
-                    } else {
-                      loopContent += remaining;
-                      updated = true;
-                      remaining = '';
-                    }
-                  } else {
-                    const endIdx = remaining.indexOf('</think>');
-                    if (endIdx !== -1) {
-                      const thinkBefore = remaining.slice(0, endIdx);
-                      if (thinkBefore) {
-                        loopThinking += thinkBefore;
-                        updated = true;
-                      }
-                      isInThinkTag = false;
-                      remaining = remaining.slice(endIdx + 8);
-                    } else {
-                      loopThinking += remaining;
-                      updated = true;
-                      remaining = '';
-                    }
-                  }
-                }
-              }
-
-              // 当首个正文 token 或工具调用到达，且存在思考内容时，结算思考耗时
-              if (loopThinking && (loopContent || delta.tool_calls) && !thinkingDuration) {
+              if (text.includes('</think>')) {
+                isInThinkTag = false;
+                const parts = text.split('</think>');
+                loopThinking += parts[0];
+                text = parts[1] || '';
                 thinkingDuration = Date.now() - loopStartTime;
               }
 
-              // 3. 收集工具调用碎片
-              if (delta.tool_calls) {
-                for (const tc of delta.tool_calls) {
-                  const idx = tc.index ?? 0;
-                  const item = toolCallsMap.get(idx) || { id: '', name: '', args: '' };
-                  if (tc.id) item.id = tc.id;
-                  if (tc.function?.name) item.name += tc.function.name;
-                  if (tc.function?.arguments) item.args += tc.function.arguments;
-                  toolCallsMap.set(idx, item);
-                }
+              if (isInThinkTag) {
+                loopThinking += text;
+              } else {
+                loopContent += text;
               }
-            } catch {
-              // 忽略解析非标准片段
+              updated = true;
             }
+
+            // Function calling 工具调用片段捕获
+            if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const index = tc.index ?? 0;
+                const existing = toolCallsMap.get(index) || { id: '', name: '', args: '' };
+                if (tc.id) existing.id = tc.id;
+                if (tc.function?.name) existing.name += tc.function.name;
+                if (tc.function?.arguments) existing.args += tc.function.arguments;
+                toolCallsMap.set(index, existing);
+              }
+              updated = true;
+            }
+          } catch {
+            // 忽略流式片段解析异常
           }
         }
 
@@ -387,7 +372,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
             ? (loopContent ? `${accumulatedContent}\n\n${loopContent}` : accumulatedContent)
             : loopContent;
 
-          agentStore.updateLastMessage((m) => ({
+          agentStore.updateLastMessage(tabId, (m) => ({
             ...m,
             thinking: mergedThinking || m.thinking,
             thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
@@ -414,6 +399,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
           buffer = lines.pop() || '';
           handleLines(lines);
         },
+        tabId,
       );
 
       if (buffer.trim()) {
@@ -425,7 +411,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
 
       if (loopThinking && !thinkingDuration) {
         thinkingDuration = Date.now() - loopStartTime;
-        agentStore.updateLastMessage((m) => ({
+        agentStore.updateLastMessage(tabId, (m) => ({
           ...m,
           thinkingTimeMs: thinkingDuration,
         }));
@@ -454,22 +440,19 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
           },
         }));
 
-      // 构建 Assistant 历史上下文记录
-      const assistantMsgObj: any = {
-        role: 'assistant',
-        content: loopContent || null,
-      };
-      if (finalToolCalls.length > 0) {
-        assistantMsgObj.tool_calls = finalToolCalls;
-      }
-      conversation.push(assistantMsgObj);
-
-      // 如果没有工具调用，本轮 Agent 任务结束
       if (finalToolCalls.length === 0) {
+        // 无更多工具调用，会话闭环结束
         break;
       }
 
-      // 处理工具调用
+      // 追加 Assistant 的调用意图至上下文
+      conversation.push({
+        role: 'assistant',
+        content: loopContent || null,
+        tool_calls: finalToolCalls,
+      });
+
+      // 逐个执行工具调用
       for (const tc of finalToolCalls) {
         if (signal.aborted) break;
 
@@ -497,7 +480,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
         }
 
         toolCallItems.push(toolCallItem);
-        agentStore.updateLastMessage((m) => ({
+        agentStore.updateLastMessage(tabId, (m) => ({
           ...m,
           toolCalls: [...toolCallItems],
         }));
@@ -539,13 +522,13 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
           if (needsApproval) {
             // 挂起等待用户确认
             toolCallItem.status = 'pending';
-            agentStore.updateLastMessage((m) => ({
+            agentStore.updateLastMessage(tabId, (m) => ({
               ...m,
               toolCalls: [...toolCallItems],
             }));
 
             allowed = await new Promise<boolean>((resolve) => {
-              agentStore.setPendingApproval(toolCallItem, resolve);
+              agentStore.setPendingApproval(tabId, toolCallItem, resolve);
             });
 
             if (signal.aborted) break;
@@ -562,7 +545,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
         if (allowed) {
           toolCallItem.status = 'executing';
           toolCallItem.result = '';
-          agentStore.updateLastMessage((m) => ({
+          agentStore.updateLastMessage(tabId, (m) => ({
             ...m,
             toolCalls: [...toolCallItems],
           }));
@@ -572,7 +555,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
             if (signal.aborted) return;
             toolCallItem.result = (toolCallItem.result || '') + chunk;
             toolCallItem.durationMs = Date.now() - startTime;
-            agentStore.updateLastMessage((m) => ({
+            agentStore.updateLastMessage(tabId, (m) => ({
               ...m,
               toolCalls: [...toolCallItems],
             }));
@@ -584,7 +567,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
           toolCallItem.result = execRes.stdout;
         }
 
-        agentStore.updateLastMessage((m) => ({
+        agentStore.updateLastMessage(tabId, (m) => ({
           ...m,
           toolCalls: [...toolCallItems],
         }));
@@ -601,7 +584,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
     }
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {
-      agentStore.updateLastMessage((m) => {
+      agentStore.updateLastMessage(tabId, (m) => {
         const abortNote = '[任务已手动中止]';
         if (!m.content?.includes(abortNote)) {
           return {
@@ -612,7 +595,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
         return m;
       });
     } else {
-      agentStore.updateLastMessage((m) => ({
+      agentStore.updateLastMessage(tabId, (m) => ({
         ...m,
         content:
           (m.content ? m.content + '\n' : '') +
@@ -620,9 +603,7 @@ export async function runAgentTask(userPrompt: string): Promise<void> {
       }));
     }
   } finally {
-    if (currentAbortController === abortCtrl) {
-      currentAbortController = null;
-    }
-    agentStore.setIsThinking(false);
+    delete abortControllers[tabId];
+    agentStore.setIsThinking(tabId, false);
   }
 }

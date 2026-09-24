@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { TerminalTab, ServerRecord } from '../types';
+import { useAgentStore } from './useAgentStore';
 
 interface TerminalState {
   tabs: TerminalTab[];
@@ -59,6 +60,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (tab && window.__TAURI_INTERNALS__) {
       invoke('close_terminal', { sessionId: tab.sessionId, isSsh: tab.isSsh }).catch(() => {});
     }
+
+    useAgentStore.getState().removeSession(id);
 
     const remaining = tabs.filter((t) => t.id !== id);
     let nextActiveId = activeTabId;

@@ -89,3 +89,54 @@ export interface SafetyCheckResult {
   command: string;
   message: string;
 }
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description?: string;
+  host_ids: string[];
+  created_at: number;
+  updated_at: number;
+}
+
+export type TaskStatus =
+  | 'Planning'
+  | 'WaitingApproval'
+  | 'Running'
+  | 'Verifying'
+  | 'Completed'
+  | 'Failed'
+  | 'Cancelled';
+
+export interface TaskStep {
+  id: string;
+  host_id: string;
+  host_name: string;
+  command: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
+  stdout: string;
+  stderr: string;
+  exit_code?: number;
+  duration_ms: number;
+}
+
+export interface TaskPlan {
+  id: string;
+  workspace_id: string;
+  prompt: string;
+  status: TaskStatus;
+  steps: TaskStep[];
+  summary?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export type AppPrimaryMode = 'terminal' | 'workspace';
+
+export interface SessionAgentState {
+  messages: ChatMessage[];
+  isThinking: boolean;
+  pendingToolCall: ToolCallItem | null;
+  approvalResolver: ((allowed: boolean) => void) | null;
+}
+

@@ -19,8 +19,9 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { useAgentStore } from '../../stores/useAgentStore';
+import { useAgentStore, createDefaultSessionState } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useTerminalStore } from '../../stores/useTerminalStore';
 import { runAgentTask, abortAgentTask } from '../../lib/agent/runner';
 import { BUILTIN_THEMES } from '../../types/theme';
 import { MiniTerminalConsole } from './MiniTerminalConsole';
@@ -32,6 +33,10 @@ export const AgentPanel: React.FC = () => {
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const { tabs, activeTabId } = useTerminalStore();
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const currentTabId = activeTab?.id || 'global';
 
   const handleCopyText = async (id: string, text: string) => {
     if (!text) return;
@@ -45,12 +50,15 @@ export const AgentPanel: React.FC = () => {
   };
 
   const {
-    messages,
-    isThinking,
-    pendingToolCall,
+    sessions,
     respondApproval,
     clearMessages,
   } = useAgentStore();
+
+  const currentSessionState = sessions[currentTabId] || createDefaultSessionState();
+  const messages = currentSessionState.messages;
+  const isThinking = currentSessionState.isThinking;
+  const pendingToolCall = currentSessionState.pendingToolCall;
 
   const {
     themeId,
@@ -88,20 +96,24 @@ export const AgentPanel: React.FC = () => {
 
   const handleSend = () => {
     const trimmed = input.trim();
-    if (!trimmed || isThinking) return;
+    if (!trimmed || isThinking || !activeTab) return;
     setInput('');
-    runAgentTask(trimmed);
+    runAgentTask(trimmed, currentTabId);
   };
 
   const handleAbort = () => {
-    abortAgentTask();
+    abortAgentTask(currentTabId);
   };
 
   const handleClear = () => {
     if (isThinking) {
-      abortAgentTask();
+      abortAgentTask(currentTabId);
     }
-    clearMessages();
+    clearMessages(currentTabId);
+  };
+
+  const handleRespondApproval = (allowed: boolean) => {
+    respondApproval(currentTabId, allowed);
   };
 
   const isMac = typeof navigator !== 'undefined' && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent || navigator.platform || '');
@@ -162,11 +174,31 @@ export const AgentPanel: React.FC = () => {
             style={{ backgroundColor: currentTheme.ui.accent }}
           />
           <span
-            className="font-semibold whitespace-nowrap truncate"
+            className="font-semibold whitespace-nowrap"
             style={{ color: currentTheme.ui.text, fontSize: `${subFontSize}px` }}
           >
             AI 智能运维
           </span>
+          {activeTab ? (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono truncate max-w-[130px] border"
+              style={{
+                backgroundColor: currentTheme.ui.cardBg,
+                borderColor: currentTheme.ui.border,
+                color: currentTheme.ui.textMuted,
+              }}
+              title={`已绑定终端: ${activeTab.title}`}
+            >
+              {activeTab.title}
+            </span>
+          ) : (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-50"
+              style={{ color: currentTheme.ui.textMuted }}
+            >
+              未连接
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -224,17 +256,30 @@ export const AgentPanel: React.FC = () => {
 
       {/* 消息与多步任务时间线 */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3.5 select-text">
-        {messages.length === 0 ? (
+        {!activeTab ? (
           <div
             className="flex flex-col items-center justify-center h-full space-y-2 text-center p-4"
             style={{ color: currentTheme.ui.textMuted }}
           >
             <Terminal className="w-8 h-8 opacity-40" />
             <p className="font-medium" style={{ color: currentTheme.ui.text, fontSize: `${baseFontSize}px` }}>
-              智能运维 Agent 就绪
+              未连接终端会话
             </p>
             <p className="leading-relaxed" style={{ fontSize: `${subFontSize}px` }}>
-              输入任务目标（如检查端口占用、排障高负载等），Agent 将自主规划并调用工具执行诊断。
+              请在左侧选择主机连接或新建本地终端，AI 智能运维将自动与对应 Shell 绑定。
+            </p>
+          </div>
+        ) : messages.length === 0 ? (
+          <div
+            className="flex flex-col items-center justify-center h-full space-y-2 text-center p-4"
+            style={{ color: currentTheme.ui.textMuted }}
+          >
+            <Terminal className="w-8 h-8 opacity-40" />
+            <p className="font-medium" style={{ color: currentTheme.ui.text, fontSize: `${baseFontSize}px` }}>
+              智能运维就绪
+            </p>
+            <p className="leading-relaxed" style={{ fontSize: `${subFontSize}px` }}>
+              已绑定: {activeTab.title}。输入运维诉求，将自主调度执行排障与诊断。
             </p>
           </div>
         ) : (
@@ -521,7 +566,7 @@ export const AgentPanel: React.FC = () => {
                             style={{ borderColor: currentTheme.ui.border }}
                           >
                             <button
-                              onClick={() => respondApproval(false)}
+                              onClick={() => handleRespondApproval(false)}
                               className="px-2.5 py-1 rounded cursor-pointer transition-colors"
                               style={{
                                 backgroundColor: currentTheme.ui.hoverBg,
@@ -532,7 +577,7 @@ export const AgentPanel: React.FC = () => {
                               拒绝
                             </button>
                             <button
-                              onClick={() => respondApproval(true)}
+                              onClick={() => handleRespondApproval(true)}
                               className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer"
                               style={{ fontSize: `${subFontSize}px` }}
                             >
@@ -640,7 +685,16 @@ export const AgentPanel: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="向 Agent 描述运维任务或排障需求..."
+            disabled={!activeTab || isThinking}
+            placeholder={
+              !activeTab
+                ? '请先连接或打开终端...'
+                : isThinking
+                ? 'Agent 正在执行任务中...'
+                : isMac
+                ? '向当前 Shell 描述运维任务 (Cmd + Enter 发送)...'
+                : '向当前 Shell 描述运维任务 (Ctrl + Enter 发送)...'
+            }
             rows={2}
             className="w-full rounded-lg p-2.5 border focus:outline-none resize-none transition-colors"
             style={{
@@ -672,7 +726,7 @@ export const AgentPanel: React.FC = () => {
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!input.trim()}
+                disabled={!activeTab || !input.trim()}
                 className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
                 style={{
                   backgroundColor: '#23d18b',

@@ -1,75 +1,157 @@
 import { create } from 'zustand';
-import type { ChatMessage, PermissionMode, ToolCallItem } from '../types';
+import type { ChatMessage, PermissionMode, ToolCallItem, SessionAgentState } from '../types';
 
-interface AgentState {
-  permissionMode: PermissionMode;
-  messages: ChatMessage[];
-  isThinking: boolean;
-  pendingToolCall: ToolCallItem | null;
-  approvalResolver: ((allowed: boolean) => void) | null;
-  setPermissionMode: (mode: PermissionMode) => void;
-  addMessage: (msg: ChatMessage) => void;
-  updateLastMessage: (updater: (msg: ChatMessage) => ChatMessage) => void;
-  setIsThinking: (thinking: boolean) => void;
-  setPendingApproval: (
-    toolCall: ToolCallItem | null,
-    resolver: ((allowed: boolean) => void) | null
-  ) => void;
-  respondApproval: (allowed: boolean) => void;
-  clearMessages: () => void;
-}
-
-export const useAgentStore = create<AgentState>((set, get) => ({
-  permissionMode: 'ask',
+export const createDefaultSessionState = (): SessionAgentState => ({
   messages: [],
   isThinking: false,
   pendingToolCall: null,
   approvalResolver: null,
+});
+
+interface AgentState {
+  permissionMode: PermissionMode;
+  sessions: Record<string, SessionAgentState>;
+
+  setPermissionMode: (mode: PermissionMode) => void;
+  getSessionState: (tabId: string) => SessionAgentState;
+  addMessage: (tabId: string, msg: ChatMessage) => void;
+  updateLastMessage: (tabId: string, updater: (msg: ChatMessage) => ChatMessage) => void;
+  setIsThinking: (tabId: string, thinking: boolean) => void;
+  setPendingApproval: (
+    tabId: string,
+    toolCall: ToolCallItem | null,
+    resolver: ((allowed: boolean) => void) | null
+  ) => void;
+  respondApproval: (tabId: string, allowed: boolean) => void;
+  clearMessages: (tabId: string) => void;
+  removeSession: (tabId: string) => void;
+}
+
+export const useAgentStore = create<AgentState>((set, get) => ({
+  permissionMode: 'ask',
+  sessions: {},
 
   setPermissionMode: (mode: PermissionMode) => {
     set({ permissionMode: mode });
   },
 
-  addMessage: (msg: ChatMessage) => {
-    set((state) => ({ messages: [...state.messages, msg] }));
+  getSessionState: (tabId: string): SessionAgentState => {
+    return get().sessions[tabId] || createDefaultSessionState();
   },
 
-  updateLastMessage: (updater: (msg: ChatMessage) => ChatMessage) => {
+  addMessage: (tabId: string, msg: ChatMessage) => {
     set((state) => {
-      if (state.messages.length === 0) return state;
-      const updated = [...state.messages];
-      const lastIndex = updated.length - 1;
-      updated[lastIndex] = updater(updated[lastIndex]);
-      return { messages: updated };
+      const prev = state.sessions[tabId] || createDefaultSessionState();
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            messages: [...prev.messages, msg],
+          },
+        },
+      };
     });
   },
 
-  setIsThinking: (thinking: boolean) => {
-    set({ isThinking: thinking });
+  updateLastMessage: (tabId: string, updater: (msg: ChatMessage) => ChatMessage) => {
+    set((state) => {
+      const prev = state.sessions[tabId];
+      if (!prev || prev.messages.length === 0) return state;
+      const updated = [...prev.messages];
+      const lastIndex = updated.length - 1;
+      updated[lastIndex] = updater(updated[lastIndex]);
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            messages: updated,
+          },
+        },
+      };
+    });
+  },
+
+  setIsThinking: (tabId: string, thinking: boolean) => {
+    set((state) => {
+      const prev = state.sessions[tabId] || createDefaultSessionState();
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            isThinking: thinking,
+          },
+        },
+      };
+    });
   },
 
   setPendingApproval: (
+    tabId: string,
     toolCall: ToolCallItem | null,
     resolver: ((allowed: boolean) => void) | null
   ) => {
-    set({
-      pendingToolCall: toolCall,
-      approvalResolver: resolver,
+    set((state) => {
+      const prev = state.sessions[tabId] || createDefaultSessionState();
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            pendingToolCall: toolCall,
+            approvalResolver: resolver,
+          },
+        },
+      };
     });
   },
 
-  respondApproval: (allowed: boolean) => {
-    const { approvalResolver } = get();
-    if (approvalResolver) {
-      approvalResolver(allowed);
+  respondApproval: (tabId: string, allowed: boolean) => {
+    const session = get().sessions[tabId];
+    if (session?.approvalResolver) {
+      session.approvalResolver(allowed);
     }
-    set({
-      pendingToolCall: null,
-      approvalResolver: null,
+    set((state) => {
+      const prev = state.sessions[tabId];
+      if (!prev) return state;
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            pendingToolCall: null,
+            approvalResolver: null,
+          },
+        },
+      };
     });
   },
 
-  clearMessages: () => {
-    set({ messages: [] });
+  clearMessages: (tabId: string) => {
+    set((state) => {
+      const prev = state.sessions[tabId];
+      if (!prev) return state;
+      return {
+        sessions: {
+          ...state.sessions,
+          [tabId]: {
+            ...prev,
+            messages: [],
+            pendingToolCall: null,
+            approvalResolver: null,
+          },
+        },
+      };
+    });
+  },
+
+  removeSession: (tabId: string) => {
+    set((state) => {
+      if (!state.sessions[tabId]) return state;
+      const { [tabId]: _, ...rest } = state.sessions;
+      return { sessions: rest };
+    });
   },
 }));
