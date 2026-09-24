@@ -135,16 +135,6 @@ export const TitleBar: React.FC = () => {
         >
           TINI TERMINAL
         </span>
-        <span
-          data-tauri-drag-region="deep"
-          className="text-[10px] px-1.5 py-0.5 rounded"
-          style={{
-            backgroundColor: currentTheme.ui.hoverBg,
-            color: currentTheme.ui.textMuted,
-          }}
-        >
-          v1.0
-        </span>
       </div>
 
       {/* 中间：原生安全拖拽区域与当前会话居中展示 */}

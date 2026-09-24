@@ -15,7 +15,7 @@ use session::{SessionContext, SessionInfo, SessionManager};
 use sftp::{SftpListResult, SftpManager};
 use ssh::{ExecStreamPayload, SshConnectOptions, SshExecResult, SshManager};
 use storage::{ServerRecord, StorageManager};
-use task::{TaskPlan, TaskManager};
+use task::{HostExecResult, TaskPlan, TaskManager};
 use workspace::{Workspace, WorkspaceManager};
 
 use std::collections::HashMap;
@@ -556,6 +556,37 @@ async fn run_workspace_task(
     tasks.run_workspace_task(&workspace_id, &prompt, &target_host_ids, &command).await
 }
 
+#[tauri::command]
+async fn execute_host_command(
+    state: State<'_, Arc<AppState>>,
+    host_id: String,
+    command: String,
+) -> Result<HostExecResult, String> {
+    let tasks = state.tasks.clone();
+    tasks.execute_on_host(&host_id, &command).await
+}
+
+#[tauri::command]
+async fn execute_host_file_read(
+    state: State<'_, Arc<AppState>>,
+    host_id: String,
+    file_path: String,
+) -> Result<String, String> {
+    let tasks = state.tasks.clone();
+    tasks.read_host_file(&host_id, &file_path).await
+}
+
+#[tauri::command]
+async fn execute_host_file_write(
+    state: State<'_, Arc<AppState>>,
+    host_id: String,
+    file_path: String,
+    content: String,
+) -> Result<(), String> {
+    let tasks = state.tasks.clone();
+    tasks.write_host_file(&host_id, &file_path, &content).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let storage = Arc::new(StorageManager::new());
@@ -627,7 +658,10 @@ pub fn run() {
             get_session_context,
             list_sessions,
             list_workspace_tasks,
-            run_workspace_task
+            run_workspace_task,
+            execute_host_command,
+            execute_host_file_read,
+            execute_host_file_write
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

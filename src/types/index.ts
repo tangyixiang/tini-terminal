@@ -57,6 +57,8 @@ export interface ToolCallItem {
   warningMessage?: string;
   result?: string;
   durationMs?: number;
+  hostId?: string;
+  hostName?: string;
 }
 
 export interface ChatMessage {
@@ -139,4 +141,12 @@ export interface SessionAgentState {
   pendingToolCall: ToolCallItem | null;
   approvalResolver: ((allowed: boolean) => void) | null;
 }
+
+export interface WorkspaceAgentState {
+  messages: ChatMessage[];
+  isThinking: boolean;
+  pendingToolCall: ToolCallItem | null;
+  approvalResolver: ((allowed: boolean) => void) | null;
+}
+
 

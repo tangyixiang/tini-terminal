@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { Workspace, TaskPlan } from '../types';
+import type { Workspace, TaskPlan, ChatMessage, PermissionMode, ToolCallItem, WorkspaceAgentState } from '../types';
+
+export const createDefaultWorkspaceAgentState = (): WorkspaceAgentState => ({
+  messages: [],
+  isThinking: false,
+  pendingToolCall: null,
+  approvalResolver: null,
+});
 
 interface WorkspaceStore {
   workspaces: Workspace[];
@@ -9,6 +16,23 @@ interface WorkspaceStore {
   tasks: TaskPlan[];
   isLoading: boolean;
   isExecutingTask: boolean;
+
+  // Workspace Agent 状态
+  permissionMode: PermissionMode;
+  workspaceStates: Record<string, WorkspaceAgentState>;
+
+  setPermissionMode: (mode: PermissionMode) => void;
+  getAgentState: (wsId?: string) => WorkspaceAgentState;
+  addMessage: (wsId: string, msg: ChatMessage) => void;
+  updateLastMessage: (wsId: string, updater: (msg: ChatMessage) => ChatMessage) => void;
+  setIsThinking: (wsId: string, thinking: boolean) => void;
+  setPendingApproval: (
+    wsId: string,
+    toolCall: ToolCallItem | null,
+    resolver: ((allowed: boolean) => void) | null
+  ) => void;
+  respondApproval: (wsId: string, allowed: boolean) => void;
+  clearMessages: (wsId: string) => void;
 
   fetchWorkspaces: () => Promise<void>;
   setActiveWorkspaceId: (id: string) => void;
@@ -34,6 +58,131 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   tasks: [],
   isLoading: false,
   isExecutingTask: false,
+  permissionMode: 'ask',
+  workspaceStates: {},
+
+  setPermissionMode: (mode: PermissionMode) => {
+    set({ permissionMode: mode });
+  },
+
+  getAgentState: (wsId?: string): WorkspaceAgentState => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    return get().workspaceStates[id] || createDefaultWorkspaceAgentState();
+  },
+
+  addMessage: (wsId: string, msg: ChatMessage) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    set((state) => {
+      const prev = state.workspaceStates[id] || createDefaultWorkspaceAgentState();
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            messages: [...prev.messages, msg],
+          },
+        },
+      };
+    });
+  },
+
+  updateLastMessage: (wsId: string, updater: (msg: ChatMessage) => ChatMessage) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    set((state) => {
+      const prev = state.workspaceStates[id];
+      if (!prev || prev.messages.length === 0) return state;
+      const updated = [...prev.messages];
+      const lastIndex = updated.length - 1;
+      updated[lastIndex] = updater(updated[lastIndex]);
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            messages: updated,
+          },
+        },
+      };
+    });
+  },
+
+  setIsThinking: (wsId: string, thinking: boolean) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    set((state) => {
+      const prev = state.workspaceStates[id] || createDefaultWorkspaceAgentState();
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            isThinking: thinking,
+          },
+        },
+      };
+    });
+  },
+
+  setPendingApproval: (
+    wsId: string,
+    toolCall: ToolCallItem | null,
+    resolver: ((allowed: boolean) => void) | null
+  ) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    set((state) => {
+      const prev = state.workspaceStates[id] || createDefaultWorkspaceAgentState();
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            pendingToolCall: toolCall,
+            approvalResolver: resolver,
+          },
+        },
+      };
+    });
+  },
+
+  respondApproval: (wsId: string, allowed: boolean) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    const current = get().workspaceStates[id];
+    if (current?.approvalResolver) {
+      current.approvalResolver(allowed);
+    }
+    set((state) => {
+      const prev = state.workspaceStates[id];
+      if (!prev) return state;
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            pendingToolCall: null,
+            approvalResolver: null,
+          },
+        },
+      };
+    });
+  },
+
+  clearMessages: (wsId: string) => {
+    const id = wsId || get().activeWorkspaceId || 'default';
+    set((state) => {
+      const prev = state.workspaceStates[id];
+      if (!prev) return state;
+      return {
+        workspaceStates: {
+          ...state.workspaceStates,
+          [id]: {
+            ...prev,
+            messages: [],
+            pendingToolCall: null,
+            approvalResolver: null,
+          },
+        },
+      };
+    });
+  },
 
   fetchWorkspaces: async () => {
     try {

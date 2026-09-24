@@ -504,203 +504,155 @@
       </div>
     </aside>
 
-    <!-- 2. 中间与右侧：Workspace Agent 任务流水线与多机并发执行矩阵 -->
+    <!-- 2. 中间与右侧：Workspace Agent 纯净多机对话视口 (Multi-Host Autonomous Agent Workspace) -->
     <section class="flex-1 flex flex-col overflow-hidden relative" style="background-color: var(--app-bg);">
-      <!-- 顶部工作区任务看板 Header -->
+      <!-- 顶部工作区对话 Header -->
       <div class="h-10 border-b px-4 flex items-center justify-between shrink-0" style="border-color: var(--border-color); background-color: var(--header-bg);">
-        <div class="flex items-center gap-3">
-          <span class="font-semibold text-xs">工作区: Production</span>
-          <span class="text-gray-500">|</span>
-          <span class="text-xs font-mono text-emerald-400" id="header-scope-display">执行范围: 3 台目标主机 (nginx-01, nginx-02, nginx-03)</span>
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="flex items-center gap-1.5 font-semibold text-xs shrink-0">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>运维工作区</span>
+          </div>
+          <span class="opacity-30">|</span>
+          <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" id="workspace-visible-hosts-pills">
+            <span class="text-[11px] font-mono opacity-60 shrink-0">AI 可见主机:</span>
+            <span id="pill-host-prod-01" class="text-[10px] px-1.5 py-0.5 rounded font-mono border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shrink-0">prod-01</span>
+            <span id="pill-host-prod-02" class="text-[10px] px-1.5 py-0.5 rounded font-mono border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shrink-0">prod-02</span>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="status-badge bg-indigo-500/10 text-indigo-400">Task #1024</span>
-          <span class="status-badge bg-emerald-500/10 text-emerald-400 font-bold">状态: 执行完成</span>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <!-- 权限模式三档切换：与清空按钮同高同字号 -->
+          <div class="h-7 flex items-center rounded border p-0.5 text-xs font-mono" style="border-color: var(--border-color); background-color: var(--card-bg);">
+            <button onclick="setWorkspacePermission('readonly')" id="ws-perm-readonly" class="h-full px-2.5 rounded opacity-60 cursor-pointer">只读</button>
+            <button onclick="setWorkspacePermission('confirm')" id="ws-perm-confirm" class="h-full px-2.5 rounded bg-white/10 font-bold text-emerald-400 cursor-pointer">确认</button>
+            <button onclick="setWorkspacePermission('auto')" id="ws-perm-auto" class="h-full px-2.5 rounded opacity-60 cursor-pointer">自动</button>
+          </div>
+
+          <button onclick="clearWorkspaceChat()" class="h-7 px-2.5 rounded border text-xs cursor-pointer opacity-70 hover:opacity-100 flex items-center gap-1 font-medium transition-opacity" style="border-color: var(--border-color); background-color: var(--card-bg);" title="清空对话">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            <span>清空</span>
+          </button>
         </div>
       </div>
 
-      <!-- 任务流与多机卡片主体 -->
-      <div class="flex-1 overflow-y-auto p-4 space-y-4">
+      <!-- 对话主体流 (Conversation Stream) -->
+      <div id="workspace-chat-container" class="flex-1 overflow-y-auto p-4 space-y-4 font-sans text-xs">
         <!-- 用户指令 -->
         <div class="flex justify-end">
-          <div class="max-w-[70%] rounded-lg p-3 text-black font-medium text-xs" style="background-color: var(--accent-color);">
-            对 3 台 Nginx 统一进行静态缓存配置更新，执行配置校验并平滑重载，最后验证服务健康状态。
+          <div class="max-w-[75%] rounded-lg p-3 text-black font-medium leading-relaxed" style="background-color: var(--accent-color);">
+            检查 prod-01 上的 Nginx 配置文件语法并提取配置，同步部署到 prod-02，测试语法通过后启动 prod-02 上的服务。
           </div>
         </div>
 
-        <!-- 任务规划卡片 (Execution Plan Card) -->
-        <div class="rounded-lg border p-3 font-mono text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
-          <div class="flex items-center justify-between pb-2 border-b" style="border-color: var(--border-color);">
-            <div class="flex items-center gap-2 font-bold text-white">
-              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-              <span>Task #1024 任务执行计划 (Execution Plan)</span>
-            </div>
-            <span class="text-[11px] text-gray-400">调度策略: 并发执行 (Concurrent)</span>
-          </div>
-
-          <div class="mt-2.5 space-y-2 text-gray-300">
-            <div class="flex items-center gap-2">
-              <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">1</span>
-              <span>[并发] 备份配置并写入静态缓存规则: <code class="text-amber-300">/etc/nginx/conf.d/cache.conf</code></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">2</span>
-              <span>[串行] 语法严格检测: <code class="text-amber-300">nginx -t</code> (若失败则立即阻断并触发单机回滚)</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">3</span>
-              <span>[串行] 平滑重载服务: <code class="text-amber-300">systemctl reload nginx</code></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">4</span>
-              <span>[验证] 本地健康探测: <code class="text-amber-300">curl -I http://127.0.0.1/health</code></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 多机批量审批确认卡片 (Multi-Host Approval Card) -->
-        <div class="rounded-lg border border-amber-500/40 p-3 bg-amber-500/5 font-mono text-xs">
-          <div class="flex items-center justify-between pb-2 border-b border-amber-500/20">
-            <div class="flex items-center gap-2 text-amber-400 font-bold">
-              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-              <span>多机操作核准确认 (Multi-host Operation Confirmation)</span>
-            </div>
-            <span class="status-badge bg-amber-500/20 text-amber-300">风险等级: 中度风险 (影响 3 台)</span>
-          </div>
-
-          <div class="mt-2 text-gray-300 grid grid-cols-2 gap-4">
-            <div>
-              <span class="text-gray-400">变更指令:</span>
-              <div class="mt-1 p-1.5 rounded bg-black/40 text-amber-300 font-terminal">systemctl reload nginx</div>
-            </div>
-            <div>
-              <span class="text-gray-400">核准目标服务器 (3 台):</span>
-              <div class="mt-1 flex flex-wrap gap-1">
-                <span class="px-1.5 py-0.5 rounded bg-white/10 text-white">nginx-01</span>
-                <span class="px-1.5 py-0.5 rounded bg-white/10 text-white">nginx-02</span>
-                <span class="px-1.5 py-0.5 rounded bg-white/10 text-white">nginx-03</span>
+        <!-- AI 思考与跨机执行流 -->
+        <div class="flex flex-col items-start space-y-3 max-w-[85%]">
+          <!-- 思考链折叠卡片 -->
+          <div class="w-full rounded border p-2.5 font-mono text-[11px]" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between text-gray-400">
+              <div class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span>跨机协同推理链 (Thinking)</span>
               </div>
+              <span>耗时: 1.8s</span>
+            </div>
+            <div class="mt-2 text-gray-300 leading-relaxed space-y-1">
+              <div>- 当前工作区可见目标主机: <strong class="text-white">prod-01 (192.168.1.101)</strong>, <strong class="text-white">prod-02 (192.168.1.102)</strong></div>
+              <div>- 步骤 1: 访问 prod-01 执行语法检测并读取 /etc/nginx/nginx.conf</div>
+              <div>- 步骤 2: 访问 prod-02 写入配置并执行自检</div>
+              <div>- 步骤 3: 申请启动服务审批并在 prod-02 上生效服务</div>
             </div>
           </div>
 
-          <div class="mt-3 flex items-center justify-end gap-2 pt-2 border-t border-amber-500/20">
-            <span class="text-emerald-400 text-[11px] mr-auto">[已通过人工审批: 操作员 root 于 16:43:02 核准]</span>
-          </div>
-        </div>
-
-        <!-- 多机并发执行矩阵卡片 (Fleet Execution Cards Matrix) -->
-        <div>
-          <div class="text-xs font-semibold mb-2 flex items-center justify-between text-gray-300">
-            <span>各节点并发执行状态 (Fleet Execution Status)</span>
-            <span class="text-gray-500 text-[11px] font-mono">并发线程数: 3</span>
-          </div>
-
-          <div class="grid grid-cols-3 gap-3">
-            <!-- 节点 1 卡片: 成功 -->
-            <div class="rounded-lg border p-3 font-mono text-xs flex flex-col justify-between border-emerald-500/30 bg-emerald-500/5">
-              <div>
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-white">nginx-01</span>
-                  <span class="status-badge bg-emerald-500/20 text-emerald-400">已完成</span>
-                </div>
-                <div class="text-[11px] text-gray-400 mt-1">192.168.1.101</div>
-
-                <div class="mt-2 text-[11px] space-y-1">
-                  <div class="text-emerald-400">[OK] 语法检测通过</div>
-                  <div class="text-emerald-400">[OK] 重载成功 (14ms)</div>
-                  <div class="text-emerald-400">[OK] HTTP 200 (curl)</div>
-                </div>
+          <!-- 步骤 1：访问 prod-01 -->
+          <div class="w-full rounded border p-2.5 font-mono text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between pb-1.5 border-b" style="border-color: var(--border-color);">
+              <div class="flex items-center gap-2">
+                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30">prod-01</span>
+                <span class="text-indigo-400 font-semibold">host_exec</span>
               </div>
-
-              <div class="mt-3 pt-2 border-t border-emerald-500/20 text-[10px] text-gray-400 flex justify-between">
-                <span>总耗时: 1.2s</span>
-                <button onclick="toggleNodeLog('log-nginx-01')" class="text-emerald-400 hover:underline cursor-pointer">查看日志</button>
-              </div>
+              <span class="status-badge bg-emerald-500/10 text-emerald-400">退出码: 0 (32ms)</span>
             </div>
-
-            <!-- 节点 2 卡片: 成功 -->
-            <div class="rounded-lg border p-3 font-mono text-xs flex flex-col justify-between border-emerald-500/30 bg-emerald-500/5">
-              <div>
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-white">nginx-02</span>
-                  <span class="status-badge bg-emerald-500/20 text-emerald-400">已完成</span>
-                </div>
-                <div class="text-[11px] text-gray-400 mt-1">192.168.1.102</div>
-
-                <div class="mt-2 text-[11px] space-y-1">
-                  <div class="text-emerald-400">[OK] 语法检测通过</div>
-                  <div class="text-emerald-400">[OK] 重载成功 (18ms)</div>
-                  <div class="text-emerald-400">[OK] HTTP 200 (curl)</div>
-                </div>
-              </div>
-
-              <div class="mt-3 pt-2 border-t border-emerald-500/20 text-[10px] text-gray-400 flex justify-between">
-                <span>总耗时: 1.4s</span>
-                <button onclick="toggleNodeLog('log-nginx-02')" class="text-emerald-400 hover:underline cursor-pointer">查看日志</button>
-              </div>
-            </div>
-
-            <!-- 节点 3 卡片: 异常阻断 -->
-            <div class="rounded-lg border p-3 font-mono text-xs flex flex-col justify-between border-red-500/30 bg-red-500/5">
-              <div>
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-white">nginx-03</span>
-                  <span class="status-badge bg-red-500/20 text-red-400">配置异常阻断</span>
-                </div>
-                <div class="text-[11px] text-gray-400 mt-1">192.168.1.103</div>
-
-                <div class="mt-2 text-[11px] space-y-1">
-                  <div class="text-red-400">[ERR] 语法检测退出码 1</div>
-                  <div class="text-amber-400">[WARN] 自动阻断重载</div>
-                  <div class="text-gray-400">[SKIP] 验证步骤跳过</div>
-                </div>
-              </div>
-
-              <div class="mt-3 pt-2 border-t border-red-500/20 text-[10px] text-gray-400 flex justify-between">
-                <span>阻断阶段: Step 2</span>
-                <button onclick="toggleNodeLog('log-nginx-03')" class="text-red-400 hover:underline cursor-pointer">查看错误</button>
-              </div>
+            <div class="mt-1.5 text-gray-300">命令: <code class="text-amber-300">nginx -t && cat /etc/nginx/nginx.conf</code></div>
+            <div class="mt-1 text-[11px] text-gray-400 p-1.5 rounded bg-black/40 font-terminal">
+              nginx: configuration file /etc/nginx/nginx.conf test is successful<br>
+              # [Config file /etc/nginx/nginx.conf extracted: 1440 bytes]
             </div>
           </div>
 
-          <!-- 折叠详细日志区域 (默认收起) -->
-          <div id="log-nginx-03" class="mt-2 p-2.5 rounded border border-red-500/30 bg-black/50 text-[11px] font-terminal text-red-300 hidden">
-            <div class="font-bold text-red-400 mb-1">[nginx-03 错误输出追踪]</div>
-            <div>nginx: [emerg] duplicate zone "cache_zone" in /etc/nginx/conf.d/cache.conf:2</div>
-            <div>nginx: configuration file /etc/nginx/nginx.conf test failed</div>
-            <div class="text-amber-300 mt-1">建议: 检查现有主配置是否已定义同名缓存区域。</div>
+          <!-- 步骤 2：访问 prod-02 写入配置 -->
+          <div class="w-full rounded border p-2.5 font-mono text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between pb-1.5 border-b" style="border-color: var(--border-color);">
+              <div class="flex items-center gap-2">
+                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">prod-02</span>
+                <span class="text-emerald-400 font-semibold">host_file_write</span>
+              </div>
+              <span class="status-badge bg-emerald-500/10 text-emerald-400">完成 (18ms)</span>
+            </div>
+            <div class="mt-1.5 text-gray-300">写入路径: <code class="text-amber-300">/etc/nginx/nginx.conf</code> (已同步 1440 字节)</div>
           </div>
-        </div>
 
-        <!-- 汇总与闭环验证报告卡片 (Verification Summary Card) -->
-        <div class="rounded-lg border p-3 font-mono text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
-          <div class="flex items-center justify-between pb-2 border-b" style="border-color: var(--border-color);">
-            <span class="font-bold text-white">执行结论与闭环报告 (Summary & Verification)</span>
-            <span class="text-gray-400">总计: 2 成功 / 1 阻断</span>
+          <!-- 步骤 3：访问 prod-02 检测语法 -->
+          <div class="w-full rounded border p-2.5 font-mono text-xs" style="background-color: var(--card-bg); border-color: var(--border-color);">
+            <div class="flex items-center justify-between pb-1.5 border-b" style="border-color: var(--border-color);">
+              <div class="flex items-center gap-2">
+                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">prod-02</span>
+                <span class="text-indigo-400 font-semibold">host_exec</span>
+              </div>
+              <span class="status-badge bg-emerald-500/10 text-emerald-400">退出码: 0 (24ms)</span>
+            </div>
+            <div class="mt-1.5 text-gray-300">命令: <code class="text-amber-300">nginx -t</code></div>
+            <div class="mt-1 text-[11px] text-gray-400 p-1.5 rounded bg-black/40 font-terminal">
+              nginx: the configuration file /etc/nginx/nginx.conf syntax is ok<br>
+              nginx: configuration file /etc/nginx/nginx.conf test is successful
+            </div>
           </div>
-          <div class="mt-2 text-gray-300 leading-relaxed text-xs">
-            本次任务针对目标 3 台主机并发执行，其中 <span class="text-emerald-400 font-semibold">nginx-01</span> 与 <span class="text-emerald-400 font-semibold">nginx-02</span> 配置生效并通过健康探测；<span class="text-red-400 font-semibold">nginx-03</span> 因重复定义缓存区在语法校验阶段被安全阻断，未影响生产流量。已生成审计快照并归档。
+
+          <!-- 步骤 4：审批卡片 (明确标识目标主机 prod-02) -->
+          <div id="ws-approval-card" class="w-full rounded border border-amber-500/40 p-2.5 font-mono text-xs bg-amber-500/5">
+            <div class="flex items-center justify-between pb-1.5 border-b border-amber-500/20">
+              <div class="flex items-center gap-2 text-amber-400 font-bold">
+                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">prod-02</span>
+                <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <span>待核准高危操作: 启动服务</span>
+              </div>
+              <span class="text-[10px] text-amber-300/80">操作仅影响目标节点</span>
+            </div>
+            <div class="mt-2 text-gray-300">
+              <div>执行目标: <strong class="text-white">prod-02 (192.168.1.102:22)</strong></div>
+              <div class="mt-0.5">待运行指令: <code class="text-amber-300">systemctl start nginx</code></div>
+            </div>
+            <div class="mt-2.5 flex items-center justify-end gap-2">
+              <button onclick="resolveWsApproval(false)" class="px-2.5 py-1 rounded border border-gray-600 hover:bg-white/5 cursor-pointer text-gray-300 text-[11px]">拒绝</button>
+              <button onclick="resolveWsApproval(true)" class="px-3 py-1 rounded bg-amber-500 text-black font-semibold hover:bg-amber-400 cursor-pointer text-[11px]">核准执行</button>
+            </div>
+          </div>
+
+          <!-- AI 最终回复 -->
+          <div class="p-3 rounded-lg border leading-relaxed space-y-1.5" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-color);">
+            <div class="font-semibold text-white">跨服务器任务协同完成：</div>
+            <p>1. 已从 <span class="text-blue-400 font-mono">prod-01</span> 导出已验证的 Nginx 主配置；</p>
+            <p>2. 已成功分发至 <span class="text-emerald-400 font-mono">prod-02</span> 并通过语法严谨性自检；</p>
+            <p>3. 待核准并在 <span class="text-emerald-400 font-mono">prod-02</span> 上启动服务。</p>
           </div>
         </div>
       </div>
 
-      <!-- 底部工作区任务输入框与快速模版 -->
+      <!-- 底部工作区对话输入框与快捷提示 -->
       <div class="p-3 border-t shrink-0 space-y-2" style="border-color: var(--border-color); background-color: var(--card-bg);">
-        <!-- 快速任务模版标签 -->
+        <!-- 跨机意图快捷建议 -->
         <div class="flex items-center gap-2 text-[11px] font-mono overflow-x-auto no-scrollbar">
-          <span class="text-gray-400 shrink-0">快捷模版:</span>
-          <button onclick="fillTaskPrompt('多机服务端口巡检', 'ss -lntp')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">端口占用 (ss -lntp)</button>
-          <button onclick="fillTaskPrompt('多机磁盘容量分析', 'df -h')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">磁盘空间 (df -h)</button>
-          <button onclick="fillTaskPrompt('多机内存状态巡检', 'free -m')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">内存占用 (free -m)</button>
-          <button onclick="fillTaskPrompt('多机 Nginx 状态检查', 'systemctl status nginx')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">Nginx 状态</button>
+          <span class="text-gray-400 shrink-0">快捷诉求:</span>
+          <button onclick="fillWsInput('对比 prod-01 与 prod-02 上的 Nginx 配置文件差异')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">跨机配置对比</button>
+          <button onclick="fillWsInput('检查所有可见主机的磁盘使用率，并清理超过 30 天的系统日志')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">集群磁盘体检</button>
+          <button onclick="fillWsInput('在 prod-01 查看最新错误日志，并将异常源 IP 同步至 dev-01 防火墙')" class="px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-gray-300 cursor-pointer shrink-0">日志联动处置</button>
         </div>
 
         <div class="flex items-center gap-2">
-          <input id="workspace-task-prompt" type="text" placeholder="任务名称/诉求 (可选，如: 统一配置检查)" class="w-1/4 px-2.5 py-1.5 rounded border text-xs outline-none font-mono" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
-          <input id="workspace-task-cmd" type="text" placeholder="输入待并发执行的 Shell 指令 (例如: nginx -t 或 docker ps)..." class="flex-1 px-3 py-1.5 rounded border text-xs outline-none font-mono" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
-          <button onclick="dispatchWorkspaceTask()" class="px-4 py-1.5 rounded text-black font-semibold text-xs cursor-pointer flex items-center gap-1.5" style="background-color: var(--accent-color);">
-            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-            <span>并发调度</span>
+          <input id="workspace-agent-input" type="text" placeholder="输入运维诉求，AI 可直接访问勾选的主机协同完成任务..." onkeydown="handleWsInputKey(event)" class="flex-1 px-3 py-2 rounded border text-xs outline-none font-mono" style="background-color: var(--input-bg); border-color: var(--border-color); color: var(--text-color);">
+          <button onclick="sendWorkspaceMessage()" class="px-4 py-2 rounded text-black font-semibold text-xs cursor-pointer flex items-center gap-1.5" style="background-color: var(--accent-color);">
+            <span>发送</span>
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
         </div>
       </div>
@@ -955,6 +907,92 @@
       }
     }
 
+    function setWorkspacePermission(mode) {
+      ['readonly', 'confirm', 'auto'].forEach(m => {
+        const btn = document.getElementById('ws-perm-' + m);
+        if (btn) {
+          if (m === mode) {
+            btn.className = "px-1.5 py-0.5 rounded bg-white/10 font-bold text-emerald-400";
+          } else {
+            btn.className = "px-1.5 py-0.5 rounded opacity-60";
+          }
+        }
+      });
+    }
+
+    function clearWorkspaceChat() {
+      const container = document.getElementById('workspace-chat-container');
+      if (container) {
+        container.innerHTML = `
+          <div class="h-full flex flex-col items-center justify-center space-y-2 opacity-50 py-16">
+            <svg class="w-10 h-10 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+            <p class="font-medium text-white text-xs">运维工作区协同 Agent 就绪</p>
+            <p class="text-[11px] text-gray-400">AI 已感知左侧勾选的主机集群。输入运维目标，AI 将自主跨主机排障与执行。</p>
+          </div>`;
+      }
+    }
+
+    function resolveWsApproval(isApproved) {
+      const card = document.getElementById('ws-approval-card');
+      if (card) {
+        if (isApproved) {
+          card.innerHTML = '<div class="text-emerald-400 font-bold py-1">[prod-02 已核准并执行成功] systemctl start nginx (退出码: 0)</div>';
+        } else {
+          card.innerHTML = '<div class="text-red-400 font-bold py-1">[prod-02 操作已由用户手动拒绝]</div>';
+        }
+      }
+    }
+
+    function fillWsInput(text) {
+      const input = document.getElementById('workspace-agent-input');
+      if (input) {
+        input.value = text;
+        input.focus();
+      }
+    }
+
+    function handleWsInputKey(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendWorkspaceMessage();
+      }
+    }
+
+    function sendWorkspaceMessage() {
+      const input = document.getElementById('workspace-agent-input');
+      if (!input || !input.value.trim()) return;
+      const text = input.value.trim();
+      input.value = '';
+
+      const container = document.getElementById('workspace-chat-container');
+      if (!container) return;
+
+      const userMsgDiv = document.createElement('div');
+      userMsgDiv.className = "flex justify-end";
+      userMsgDiv.innerHTML = `
+        <div class="max-w-[75%] rounded-lg p-3 text-black font-medium leading-relaxed" style="background-color: var(--accent-color);">
+          ${text}
+        </div>`;
+      container.appendChild(userMsgDiv);
+
+      const aiMsgDiv = document.createElement('div');
+      aiMsgDiv.className = "flex flex-col items-start space-y-3 max-w-[85%]";
+      aiMsgDiv.innerHTML = `
+        <div class="w-full rounded border p-2.5 font-mono text-[11px]" style="background-color: var(--card-bg); border-color: var(--border-color);">
+          <div class="flex items-center gap-1.5 text-emerald-400 font-semibold mb-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>自主规划跨机步骤</span>
+          </div>
+          <div class="text-gray-300">正在分析可见服务器环境，编排针对目标节点的安全访问链...</div>
+        </div>
+        <div class="p-3 rounded-lg border leading-relaxed space-y-1.5" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-color);">
+          <div class="font-semibold text-white">调度反馈：</div>
+          <p>已接收任务，AI 将针对选定主机群执行诊断并报告结果。</p>
+        </div>`;
+      container.appendChild(aiMsgDiv);
+      container.scrollTop = container.scrollHeight;
+    }
+
     function toggleSelectAllHosts(checked) {
       document.querySelectorAll('input[name="target-host"]').forEach(cb => {
         cb.checked = checked;
@@ -967,7 +1005,6 @@
       const totalBoxes = document.querySelectorAll('input[name="target-host"]');
       const count = checkedBoxes.length;
       document.getElementById('label-selected-count').textContent = count + ' / ' + totalBoxes.length + ' 台已勾选';
-      document.getElementById('header-scope-display').textContent = '执行范围: ' + count + ' 台目标主机已就绪';
 
       const checkAll = document.getElementById('check-select-all-hosts');
       if (checkAll) {
@@ -984,32 +1021,22 @@
           }
         }
       });
-    }
 
-    function toggleNodeLog(logId) {
-      const el = document.getElementById(logId);
-      if (el) {
-        el.classList.toggle('hidden');
+      // 动态更新工作区顶部可见主机胶囊
+      const pillsContainer = document.getElementById('workspace-visible-hosts-pills');
+      if (pillsContainer) {
+        let html = '<span class="text-[11px] font-mono opacity-60 shrink-0">AI 可见主机:</span>';
+        checkedBoxes.forEach(cb => {
+          const parent = cb.closest('label');
+          const nameSpan = parent ? parent.querySelector('.font-medium') : null;
+          const hostName = nameSpan ? nameSpan.textContent.trim() : 'host';
+          html += `<span class="text-[10px] px-1.5 py-0.5 rounded font-mono border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shrink-0">${hostName}</span>`;
+        });
+        if (checkedBoxes.length === 0) {
+          html += '<span class="text-[10px] text-amber-400 font-mono">（无勾选主机，请在左侧勾选）</span>';
+        }
+        pillsContainer.innerHTML = html;
       }
-    }
-
-    function fillTaskPrompt(promptText, cmdText) {
-      const promptInput = document.getElementById('workspace-task-prompt');
-      const cmdInput = document.getElementById('workspace-task-cmd');
-      if (promptInput) promptInput.value = promptText;
-      if (cmdInput) cmdInput.value = cmdText;
-    }
-
-    function dispatchWorkspaceTask() {
-      const promptInput = document.getElementById('workspace-task-prompt');
-      const cmdInput = document.getElementById('workspace-task-cmd');
-      const prompt = promptInput ? promptInput.value.trim() : '';
-      const cmd = cmdInput ? cmdInput.value.trim() : '';
-      if (!cmd) {
-        alert('请输入待并发执行的 Shell 指令');
-        return;
-      }
-      alert('已触发多机并发调度: ' + (prompt || '多机运维任务') + '\n执行指令: ' + cmd + '\nTaskEngine 已向选定主机群并发下发指令并捕获各节点输出。');
     }
 
     function changeTheme(theme) {
