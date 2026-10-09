@@ -584,33 +584,6 @@ export const AgentPanel: React.FC = () => {
                             )}
                           </>
                         )}
-
-                        {/* 单步审批操作按钮 */}
-                        {isPending && pendingToolCall?.id === tc.id && (
-                          <div
-                            className="mt-2.5 flex items-center justify-end gap-2 pt-1 border-t"
-                            style={{ borderColor: currentTheme.ui.border }}
-                          >
-                            <button
-                              onClick={() => handleRespondApproval(false)}
-                              className="px-2.5 py-1 rounded cursor-pointer transition-colors"
-                              style={{
-                                backgroundColor: currentTheme.ui.hoverBg,
-                                color: currentTheme.ui.text,
-                                fontSize: `${subFontSize}px`,
-                              }}
-                            >
-                              拒绝
-                            </button>
-                            <button
-                              onClick={() => handleRespondApproval(true)}
-                              className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer"
-                              style={{ fontSize: `${subFontSize}px` }}
-                            >
-                              允许执行
-                            </button>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
