@@ -18,6 +18,7 @@ import {
   Check,
   Maximize2,
   Minimize2,
+  ArrowDown,
 } from 'lucide-react';
 import { useAgentStore, createDefaultSessionState } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -33,6 +34,9 @@ export const AgentPanel: React.FC = () => {
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUpRef = useRef(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   const { tabs, activeTabId } = useTerminalStore();
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -90,14 +94,31 @@ export const AgentPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [isThinking]);
 
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    isUserScrolledUpRef.current = !isAtBottom;
+    setShowScrollBottom(!isAtBottom);
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isUserScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, pendingToolCall, isThinking]);
+
+  const scrollToBottom = () => {
+    isUserScrolledUpRef.current = false;
+    setShowScrollBottom(false);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const handleSend = () => {
     const trimmed = input.trim();
     if (!trimmed || isThinking || !activeTab) return;
     setInput('');
+    scrollToBottom();
     runAgentTask(trimmed, currentTabId);
   };
 
@@ -255,7 +276,11 @@ export const AgentPanel: React.FC = () => {
       </div>
 
       {/* 消息与多步任务时间线 */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3.5 select-text">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-3 space-y-3.5 select-text relative"
+      >
         {!activeTab ? (
           <div
             className="flex flex-col items-center justify-center h-full space-y-2 text-center p-4"
@@ -436,6 +461,7 @@ export const AgentPanel: React.FC = () => {
                     return (
                       <div
                         key={tc.id}
+                        id={`tool-call-${tc.id}`}
                         className="border rounded p-2.5 transition-colors"
                         style={{
                           backgroundColor:
@@ -670,9 +696,30 @@ export const AgentPanel: React.FC = () => {
         )}
 
         <div ref={messagesEndRef} />
+
+        {/* 浮动回到底部快捷按钮 */}
+        {showScrollBottom && (
+          <div className="sticky bottom-2 flex justify-end pr-1 pointer-events-none z-10">
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="pointer-events-auto px-2.5 py-1 rounded-full shadow-lg border flex items-center gap-1 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+              style={{
+                backgroundColor: currentTheme.ui.cardBg,
+                borderColor: currentTheme.ui.border,
+                color: currentTheme.ui.text,
+                fontSize: `${smallFontSize}px`,
+              }}
+              title="滚动至最新消息"
+            >
+              <ArrowDown className="w-3.5 h-3.5 text-indigo-400" />
+              <span>最新位置</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 底部输入框 */}
+      {/* 底部输入框与常驻审批操作条 */}
       <div
         className="p-3 border-t transition-colors"
         style={{
@@ -680,6 +727,112 @@ export const AgentPanel: React.FC = () => {
           borderColor: currentTheme.ui.border,
         }}
       >
+        {/* 常驻待审批操作条 */}
+        {pendingToolCall && (
+          <div
+            className="mb-2.5 p-2.5 rounded-lg border flex flex-col gap-2 shadow-sm transition-all animate-in fade-in slide-in-from-bottom-2 duration-150"
+            style={{
+              backgroundColor:
+                pendingToolCall.riskLevel === 'dangerous'
+                  ? 'rgba(239, 68, 68, 0.12)'
+                  : 'rgba(245, 158, 11, 0.12)',
+              borderColor:
+                pendingToolCall.riskLevel === 'dangerous' ? '#ef4444' : '#f59e0b',
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ShieldAlert
+                  className={`w-4 h-4 shrink-0 ${
+                    pendingToolCall.riskLevel === 'dangerous'
+                      ? 'text-red-500'
+                      : 'text-amber-500'
+                  }`}
+                />
+                <span
+                  className="font-semibold truncate"
+                  style={{ color: currentTheme.ui.text, fontSize: `${subFontSize}px` }}
+                >
+                  待授权执行: {pendingToolCall.name}
+                </span>
+                <span
+                  className={`px-1.5 py-0.2 rounded font-medium text-[10px] ${
+                    pendingToolCall.riskLevel === 'dangerous'
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  }`}
+                >
+                  {pendingToolCall.riskLevel === 'dangerous' ? '高危命令' : '需确认'}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById(`tool-call-${pendingToolCall.id}`);
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }}
+                className="underline opacity-75 hover:opacity-100 cursor-pointer transition-opacity shrink-0"
+                style={{ color: currentTheme.ui.accent, fontSize: `${smallFontSize}px` }}
+                title="在上方对话中定位该卡片"
+              >
+                定位卡片
+              </button>
+            </div>
+
+            <div
+              className="font-terminal px-2 py-1 rounded border break-all max-h-20 overflow-y-auto"
+              style={{
+                backgroundColor: currentTheme.ui.inputBg,
+                borderColor: currentTheme.ui.border,
+                color: currentTheme.ui.text,
+                fontSize: `${codeFontSize}px`,
+              }}
+            >
+              {pendingToolCall.name === 'terminal_exec'
+                ? pendingToolCall.args?.command
+                : JSON.stringify(pendingToolCall.args)}
+            </div>
+
+            {pendingToolCall.warningMessage && (
+              <div
+                className="text-amber-500 flex items-center gap-1"
+                style={{ fontSize: `${smallFontSize}px` }}
+              >
+                <span>{pendingToolCall.warningMessage}</span>
+              </div>
+            )}
+
+            <div
+              className="flex items-center justify-end gap-2 pt-1 border-t"
+              style={{ borderColor: currentTheme.ui.border }}
+            >
+              <button
+                type="button"
+                onClick={() => handleRespondApproval(false)}
+                className="px-2.5 py-1 rounded cursor-pointer transition-colors"
+                style={{
+                  backgroundColor: currentTheme.ui.hoverBg,
+                  color: currentTheme.ui.text,
+                  fontSize: `${subFontSize}px`,
+                }}
+              >
+                拒绝
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRespondApproval(true)}
+                className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer transition-colors"
+                style={{ fontSize: `${subFontSize}px` }}
+              >
+                允许执行
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="relative">
           <textarea
             value={input}

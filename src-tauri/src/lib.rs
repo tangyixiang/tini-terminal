@@ -19,7 +19,7 @@ use task::{HostExecResult, TaskPlan, TaskManager};
 use workspace::{Workspace, WorkspaceManager};
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
 
@@ -237,20 +237,62 @@ async fn exec_local_command(
 
 // ---------------- SFTP 文件管理命令 ----------------
 
+fn is_sftp_conn_broken_err(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("sftp")
+        || lower.contains("broken pipe")
+        || lower.contains("connection reset")
+        || lower.contains("connection aborted")
+        || lower.contains("closed")
+        || lower.contains("socket")
+        || lower.contains("channel")
+        || lower.contains("timeout")
+}
+
+async fn run_sftp_op<T, F>(
+    ssh: SshManager,
+    session_id: String,
+    op: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: Fn(Arc<Mutex<ssh2::Session>>) -> Result<T, String> + Send + Sync + 'static,
+{
+    let sess = ssh.get_or_create_sftp_session(&session_id)?;
+    let op_arc = Arc::new(op);
+    let op1 = Arc::clone(&op_arc);
+    let res = tokio::task::spawn_blocking(move || op1(sess))
+        .await
+        .map_err(|e| format!("执行 SFTP 任务失败: {}", e))?;
+
+    match res {
+        Ok(val) => Ok(val),
+        Err(err) => {
+            if is_sftp_conn_broken_err(&err) {
+                ssh.invalidate_sftp_session(&session_id);
+                if let Ok(new_sess) = ssh.get_or_create_sftp_session(&session_id) {
+                    let op2 = Arc::clone(&op_arc);
+                    if let Ok(retry_res) = tokio::task::spawn_blocking(move || op2(new_sess)).await {
+                        return retry_res;
+                    }
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
 #[tauri::command]
 async fn sftp_list_dir(
     state: State<'_, Arc<AppState>>,
     session_id: String,
     remote_path: String,
 ) -> Result<SftpListResult, String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::list_dir(sess, &remote_path)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 读取目录失败: {}", e))?
 }
 
 #[tauri::command]
@@ -259,14 +301,11 @@ async fn sftp_mkdir(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::mkdir(sess, &remote_path)
     })
     .await
-    .map_err(|e| format!("新建文件夹失败: {}", e))?
 }
 
 #[tauri::command]
@@ -275,14 +314,11 @@ async fn sftp_create_file(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::create_file(sess, &remote_path)
     })
     .await
-    .map_err(|e| format!("新建文件失败: {}", e))?
 }
 
 #[tauri::command]
@@ -292,14 +328,11 @@ async fn sftp_rename(
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::rename(sess, &old_path, &new_path)
     })
     .await
-    .map_err(|e| format!("重命名失败: {}", e))?
 }
 
 #[tauri::command]
@@ -309,14 +342,11 @@ async fn sftp_remove(
     remote_path: String,
     is_dir: bool,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::remove(sess, &remote_path, is_dir)
     })
     .await
-    .map_err(|e| format!("删除失败: {}", e))?
 }
 
 #[tauri::command]
@@ -325,14 +355,11 @@ async fn sftp_read_file(
     session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::read_file(sess, &remote_path)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 读取文件失败: {}", e))?
 }
 
 #[tauri::command]
@@ -342,14 +369,11 @@ async fn sftp_write_file(
     remote_path: String,
     content: String,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::write_file(sess, &remote_path, &content)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 写入文件失败: {}", e))?
 }
 
 #[tauri::command]
@@ -357,14 +381,11 @@ async fn sftp_get_home_dir(
     state: State<'_, Arc<AppState>>,
     session_id: String,
 ) -> Result<String, String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::get_home_dir(sess)
     })
     .await
-    .map_err(|e| format!("获取 SFTP 用户根目录失败: {}", e))?
 }
 
 #[tauri::command]
@@ -375,14 +396,11 @@ async fn sftp_upload_bytes(
     file_name: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::upload_bytes(sess, &remote_dir, &file_name, &data)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 上传文件失败: {}", e))?
 }
 
 #[tauri::command]
@@ -391,14 +409,11 @@ async fn sftp_download_file(
     session_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::download_to_downloads_dir(sess, &remote_path)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 下载文件失败: {}", e))?
 }
 
 #[tauri::command]
@@ -408,14 +423,11 @@ async fn sftp_upload_file(
     local_path: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let sess = state
-        .ssh
-        .get_or_create_sftp_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
+    let ssh = state.ssh.clone();
+    run_sftp_op(ssh, session_id, move |sess| {
         SftpManager::upload_local_file(sess, &local_path, &remote_path)
     })
     .await
-    .map_err(|e| format!("执行 SFTP 本地文件上传失败: {}", e))?
 }
 
 // ---------------- 危险命令拦截与 AI 命令 ----------------

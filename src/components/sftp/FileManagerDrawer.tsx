@@ -68,6 +68,10 @@ export const FileManagerDrawer: React.FC = () => {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
 
+  // 跨主机路径与状态隔离缓存
+  const tabPathMapRef = useRef<Record<string, string>>({});
+  const lastSessionIdRef = useRef<string | null>(null);
+
   const loadDirectory = async (dirPath: string = '') => {
     const tab = activeTabRef.current;
     if (!tab || !tab.isSsh) {
@@ -86,6 +90,7 @@ export const FileManagerDrawer: React.FC = () => {
         setFiles(res.files || []);
         setCurrentPath(res.current_dir);
         setPathInput(res.current_dir);
+        tabPathMapRef.current[tab.sessionId] = res.current_dir;
       } else {
         // 开发预览环境模拟
         const mockTarget = dirPath || '/root';
@@ -96,6 +101,7 @@ export const FileManagerDrawer: React.FC = () => {
         ]);
         setCurrentPath(mockTarget);
         setPathInput(mockTarget);
+        tabPathMapRef.current[tab.sessionId] = mockTarget;
       }
     } catch (e: any) {
       setStatusMsg(`读取目录失败: ${e?.message || e}`);
@@ -105,11 +111,28 @@ export const FileManagerDrawer: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isSftpDrawerOpen && activeTab && activeTab.isSsh) {
-      // 传入空字符串，后端直接执行 realpath(".") 解析用户默认根目录，单次网络往返即可完成
-      loadDirectory('');
+    if (!isSftpDrawerOpen) return;
+
+    if (activeTab && activeTab.isSsh) {
+      if (lastSessionIdRef.current !== activeTab.sessionId) {
+        lastSessionIdRef.current = activeTab.sessionId;
+        // 切换标签时重置打开的文件编辑态，防止误存入不同主机
+        setSelectedFile(null);
+        setFileContent('');
+        setSaving(false);
+
+        const cachedPath = tabPathMapRef.current[activeTab.sessionId] || '';
+        loadDirectory(cachedPath);
+      }
+    } else {
+      lastSessionIdRef.current = null;
+      setFiles([]);
+      setCurrentPath('');
+      setPathInput('');
+      setSelectedFile(null);
+      setStatusMsg('请先激活并连接一个 SSH 远程终端');
     }
-  }, [isSftpDrawerOpen, activeTab?.sessionId]);
+  }, [isSftpDrawerOpen, activeTab?.sessionId, activeTab?.isSsh]);
 
   // 监听 Tauri 2 原生文件拖拽（解决 macOS 拦截从访达拖入图片/文件的问题）
   useEffect(() => {

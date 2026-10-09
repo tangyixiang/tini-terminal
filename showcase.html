@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tini Terminal · 产品全景展示与演示</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      --bg-dark: #0a0c10;
+      --card-bg: rgba(18, 22, 30, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent-green: #23d18b;
+      --accent-cyan: #22d3ee;
+      --accent-blue: #3b82f6;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .font-mono, .font-terminal {
+      font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
+      letter-spacing: -0.02em;
+    }
+
+    /* Presentation Slide Track */
+    .slider-viewport {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .slider-track {
+      display: flex;
+      width: 600vw;
+      height: 100vh;
+      transition: transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: transform;
+    }
+
+    .slide {
+      width: 100vw;
+      height: 100vh;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 72px 64px 80px 64px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Subtle Cyber Grid & Ambient Glow */
+    .bg-grid {
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(35, 209, 139, 0.12) 0%, transparent 60%),
+        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 100% 100%, 48px 48px, 48px 48px;
+    }
+
+    .glass-panel {
+      background: var(--card-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+    }
+
+    .glow-border {
+      box-shadow: 0 0 0 1px rgba(35, 209, 139, 0.25), 0 20px 50px -10px rgba(0, 0, 0, 0.8);
+    }
+
+    .glow-cyan {
+      box-shadow: 0 0 35px -5px rgba(34, 211, 238, 0.25);
+    }
+
+    .glow-green {
+      box-shadow: 0 0 40px -5px rgba(35, 209, 139, 0.3);
+    }
+
+    .cursor-blink {
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
+
+    /* Theme Preview Transitions */
+    .theme-card {
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .theme-card:hover {
+      transform: translateY(-4px) scale(1.02);
+    }
+  </style>
+</head>
+<body class="bg-[#0a0c10] text-[#f3f4f6]">
+
+  <!-- Top Sticky Navigation Bar -->
+  <header class="fixed top-0 left-0 right-0 h-16 z-50 px-8 flex items-center justify-between border-b border-white/5 bg-[#0a0c10]/80 backdrop-blur-md">
+    <!-- Brand Info -->
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center p-1.5 shadow-lg shadow-emerald-500/20">
+        <svg viewBox="0 0 512 512" class="w-full h-full fill-none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M168 196 L292 256 L168 316" stroke="#000" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="322" y="232" width="36" height="52" rx="6" fill="#000"/>
+        </svg>
+      </div>
+      <div class="flex flex-col">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold tracking-wider font-mono text-white">TINI TERMINAL</span>
+          <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono">v2.0</span>
+        </div>
+        <span class="text-[11px] text-gray-400">下一代跨平台 AI 原生终端</span>
+      </div>
+    </div>
+
+    <!-- Quick Slide Pills Navigation -->
+    <nav class="hidden md:flex items-center gap-1.5 p-1 rounded-xl bg-white/5 border border-white/5 text-xs font-mono">
+      <button onclick="goToSlide(0)" id="nav-pill-0" class="px-3 py-1.5 rounded-lg transition-all text-black bg-emerald-400 font-semibold cursor-pointer">
+        01 全局视图
+      </button>
+      <button onclick="goToSlide(1)" id="nav-pill-1" class="px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer">
+        02 终端智能运维
+      </button>
+      <button onclick="goToSlide(2)" id="nav-pill-2" class="px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer">
+        03 运维工作区
+      </button>
+      <button onclick="goToSlide(3)" id="nav-pill-3" class="px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer">
+        04 跨机协同智能体
+      </button>
+      <button onclick="goToSlide(4)" id="nav-pill-4" class="px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer">
+        05 多主题矩阵
+      </button>
+      <button onclick="goToSlide(5)" id="nav-pill-5" class="px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer">
+        06 品牌理念
+      </button>
+    </nav>
+
+    <!-- Top Right Controls -->
+    <div class="flex items-center gap-3">
+      <div class="hidden lg:flex items-center gap-2 text-xs font-mono text-gray-400 bg-white/5 px-2.5 py-1 rounded-md border border-white/5">
+        <span class="px-1 rounded bg-white/10 text-gray-300">←</span>
+        <span class="px-1 rounded bg-white/10 text-gray-300">→</span>
+        <span>切换幻灯片</span>
+      </div>
+      <button onclick="toggleFullscreen()" class="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 cursor-pointer transition-colors" title="全屏演示模式">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Slider Viewport -->
+  <main class="slider-viewport bg-grid">
+    <div class="slider-track" id="slider-track">
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 1: 全局全景 (Global Architecture & Desktop Shell) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>SLIDE 01 · 全局全景体验</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              极客终端手感与 AI 运维的浑然一体
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              结合阿里云 WebSSH 的毫秒级交互体验、Cursor 级流式智能体深度推理，以及企业级服务器会话管理体系。
+            </p>
+          </div>
+          <!-- Highlights Pill -->
+          <div class="hidden xl:flex items-center gap-3 font-mono text-xs">
+            <div class="px-3 py-2 rounded-xl bg-white/5 border border-white/5 flex flex-col items-center">
+              <span class="text-emerald-400 font-bold text-sm">&lt; 15ms</span>
+              <span class="text-[10px] text-gray-400">输入端到端延迟</span>
+            </div>
+            <div class="px-3 py-2 rounded-xl bg-white/5 border border-white/5 flex flex-col items-center">
+              <span class="text-cyan-400 font-bold text-sm">1:1 PTY</span>
+              <span class="text-[10px] text-gray-400">独立会话上下文</span>
+            </div>
+            <div class="px-3 py-2 rounded-xl bg-white/5 border border-white/5 flex flex-col items-center">
+              <span class="text-indigo-400 font-bold text-sm">Rust 2.0</span>
+              <span class="text-[10px] text-gray-400">本地异步安全内核</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- High-Fidelity Desktop Mockup (Scale-fitted for 16:9 Viewport) -->
+        <div class="my-auto flex justify-center items-center w-full">
+          <div class="w-full max-w-[1240px] h-[540px] rounded-xl overflow-hidden glass-panel glow-border flex flex-col bg-[#121212] border border-[#2a2a2a] shadow-2xl relative">
+            
+            <!-- Window TitleBar -->
+            <div class="h-10 border-b border-[#2a2a2a] bg-[#181818] flex items-center justify-between px-3 shrink-0 select-none">
+              <!-- macOS Traffic Lights -->
+              <div class="flex items-center gap-2 w-20">
+                <span class="w-3 h-3 rounded-full bg-[#ff5f56] inline-block"></span>
+                <span class="w-3 h-3 rounded-full bg-[#ffbd2e] inline-block"></span>
+                <span class="w-3 h-3 rounded-full bg-[#27c93f] inline-block"></span>
+              </div>
+
+              <!-- Active Session Capsule -->
+              <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-white/5 border border-white/5 text-gray-200">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span>root@prod-01 (192.168.1.101:22)</span>
+                <span class="text-[10px] text-gray-500 font-mono">Linux 6.8.0</span>
+              </div>
+
+              <!-- Right Actions -->
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-2 py-0.5 rounded font-mono bg-[#1f1f1f] text-gray-300 border border-white/5">默认主题</span>
+                <span class="text-[11px] px-2 py-1 rounded font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-1">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  <span>AI 智能运维 (开启)</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Main App Body: 3-Column Synergy -->
+            <div class="flex-1 flex overflow-hidden">
+              
+              <!-- Column 1: Server Sidebar (Left) -->
+              <div class="w-56 border-r border-[#2a2a2a] bg-[#141414] flex flex-col shrink-0">
+                <!-- Mode Switcher -->
+                <div class="p-2 border-b border-[#2a2a2a] bg-[#181818]">
+                  <div class="flex rounded-lg bg-[#1c1c1c] p-0.5 border border-[#2a2a2a] text-xs font-mono">
+                    <button class="flex-1 py-1 rounded bg-[#23d18b] text-black font-semibold text-center">Terminal</button>
+                    <button class="flex-1 py-1 rounded text-gray-400 hover:text-white text-center">Workspace</button>
+                  </div>
+                </div>
+
+                <div class="px-3 py-2 border-b border-[#2a2a2a] flex items-center justify-between text-xs text-gray-400 font-semibold">
+                  <span>服务器列表 (Hosts)</span>
+                  <span class="text-[10px] px-1.5 rounded bg-white/5 text-gray-400 font-mono">3 台</span>
+                </div>
+
+                <!-- Host Items -->
+                <div class="flex-1 p-2 space-y-1.5 overflow-y-auto font-mono text-xs">
+                  <!-- prod-01 (Active) -->
+                  <div class="p-2 rounded bg-white/5 border border-emerald-500/40">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-white">prod-01</span>
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400">3 Shells</span>
+                    </div>
+                    <div class="text-[11px] text-gray-400 mt-1">192.168.1.101 · root</div>
+                  </div>
+
+                  <!-- prod-02 -->
+                  <div class="p-2 rounded hover:bg-white/5 border border-transparent text-gray-300">
+                    <div class="flex items-center justify-between">
+                      <span class="font-medium text-gray-200">prod-02</span>
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-gray-400">1 Shell</span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-1">192.168.1.102 · root</div>
+                  </div>
+
+                  <!-- dev-01 -->
+                  <div class="p-2 rounded hover:bg-white/5 border border-transparent text-gray-400">
+                    <div class="flex items-center justify-between">
+                      <span class="font-medium text-gray-300">dev-01</span>
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-gray-500">空闲</span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-1">10.0.0.12 · ubuntu</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Column 2: Terminal Interactive Area (Middle) -->
+              <div class="flex-1 flex flex-col bg-[#171717] overflow-hidden">
+                <!-- Secondary Tab Bar -->
+                <div class="h-8 border-b border-[#2a2a2a] bg-[#181818] flex items-center px-2 gap-1 font-mono text-xs shrink-0">
+                  <span class="text-gray-500 px-1 text-[11px]">prod-01:</span>
+                  <div class="h-6 px-3 rounded-t bg-[#1f1f1f] border-b-2 border-emerald-400 text-white flex items-center gap-1.5 font-medium">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span>Shell 1</span>
+                    <span class="text-[10px] text-gray-400">/etc/nginx</span>
+                  </div>
+                  <div class="h-6 px-2.5 rounded-t hover:bg-white/5 text-gray-400 flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                    <span>Shell 2</span>
+                  </div>
+                  <div class="h-6 px-2.5 rounded-t hover:bg-white/5 text-gray-400 flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                    <span>Shell 3</span>
+                  </div>
+                  <button class="w-5 h-5 rounded hover:bg-white/10 text-gray-400 flex items-center justify-center text-xs ml-1">+</button>
+                </div>
+
+                <!-- Terminal Screen Canvas -->
+                <div class="flex-1 p-4 font-terminal text-[13px] leading-relaxed text-gray-200 overflow-y-auto select-text space-y-1">
+                  <div class="text-gray-500">连接到 prod-01 (192.168.1.101:22) 成功...</div>
+                  <div class="text-gray-500">Linux prod-01 6.8.0-40-generic x86_64 Ubuntu 24.04 LTS</div>
+                  <div class="pt-2"><span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">~</span># cd /etc/nginx</div>
+                  <div><span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">/etc/nginx</span># ls -la</div>
+                  <div class="text-gray-400 font-mono text-[12px]">
+                    drwxr-xr-x 8 root root 4096 Sep 23 15:10 .<br>
+                    drwxr-xr-x 2 root root 4096 Sep 23 15:09 conf.d<br>
+                    -rw-r--r-- 1 root root 1440 Sep 23 15:10 nginx.conf
+                  </div>
+                  <div class="pt-2 p-2.5 rounded bg-indigo-950/20 border border-indigo-500/20 text-indigo-300 text-xs">
+                    <div class="font-semibold text-indigo-400 mb-0.5">[Terminal Agent 共享 PTY 执行同步]</div>
+                    <div>root@prod-01:/etc/nginx# nginx -t</div>
+                    <div class="text-gray-300">nginx: configuration file /etc/nginx/nginx.conf test is successful</div>
+                    <div class="text-emerald-400 text-[11px] mt-1">[Command Completed: Exit Code 0, Duration: 38ms]</div>
+                  </div>
+                  <div class="pt-1">
+                    <span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">/etc/nginx</span># <span class="cursor-blink text-emerald-400 font-bold">_</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Column 3: AI Ops Drawer (Right) -->
+              <div class="w-72 border-l border-[#2a2a2a] bg-[#161616] flex flex-col shrink-0">
+                <!-- Agent Drawer Header -->
+                <div class="p-3 border-b border-[#2a2a2a] bg-[#1c1c1c]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      <span>AI 智能运维</span>
+                      <span class="text-[10px] px-1 rounded bg-white/10 text-gray-400 font-mono">Shell 1</span>
+                    </div>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-white/10 text-emerald-400">确认模式</span>
+                  </div>
+                  <div class="mt-2 p-1.5 rounded bg-black/30 text-[11px] font-mono text-gray-400 flex justify-between">
+                    <span>CWD: <strong class="text-emerald-400">/etc/nginx</strong></span>
+                    <span>bash · 共享 PTY</span>
+                  </div>
+                </div>
+
+                <!-- Chat Stream -->
+                <div class="flex-1 p-2.5 space-y-2.5 overflow-y-auto text-xs">
+                  <!-- User Message -->
+                  <div class="flex justify-end">
+                    <div class="p-2 rounded-lg bg-emerald-400 text-black font-medium max-w-[90%] text-[11px] leading-relaxed">
+                      检查当前 Nginx 配置文件语法，确认无误后重载服务。
+                    </div>
+                  </div>
+                  <!-- Tool Call Result Card -->
+                  <div class="p-2 rounded border border-[#2a2a2a] bg-[#1c1c1c] font-mono text-[11px] space-y-1">
+                    <div class="flex items-center justify-between text-indigo-400 font-semibold border-b border-white/5 pb-1">
+                      <span>terminal_exec</span>
+                      <span class="text-emerald-400 text-[10px]">退出码: 0 (38ms)</span>
+                    </div>
+                    <div class="text-gray-300">nginx -t</div>
+                    <div class="text-[10px] text-gray-400 bg-black/40 p-1 rounded font-terminal">syntax is ok, test successful</div>
+                  </div>
+                  <!-- Approval Card -->
+                  <div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 font-mono text-[11px] space-y-1.5">
+                    <div class="text-amber-400 font-bold flex items-center gap-1">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                      <span>高危待核准: 重载服务</span>
+                    </div>
+                    <div class="text-gray-300 text-[10px]">指令: <code class="text-amber-300">systemctl reload nginx</code></div>
+                    <div class="flex justify-end gap-1.5 pt-1">
+                      <span onclick="triggerApprovalToast(false, 'prod-01', 'systemctl reload nginx')" class="px-2 py-0.5 rounded border border-gray-600 text-gray-400 text-[10px] cursor-pointer hover:bg-white/5">拒绝</span>
+                      <span onclick="triggerApprovalToast(true, 'prod-01', 'systemctl reload nginx')" class="px-2 py-0.5 rounded bg-amber-500 text-black font-bold text-[10px] cursor-pointer hover:bg-amber-400">核准执行</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Input Field -->
+                <div class="p-2 border-t border-[#2a2a2a] bg-[#1c1c1c]">
+                  <div class="flex items-center gap-1">
+                    <div class="flex-1 px-2 py-1 rounded bg-[#121212] border border-[#2a2a2a] text-gray-400 font-mono text-[11px]">
+                      输入运维指令...
+                    </div>
+                    <div class="px-2 py-1 rounded bg-emerald-400 text-black font-bold text-[11px]">发送</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Footer Status Bar -->
+            <div class="h-6 border-t border-[#2a2a2a] bg-[#181818] px-3 flex items-center justify-between text-[11px] font-mono text-gray-400 shrink-0">
+              <div class="flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span class="text-gray-300">SessionManager: 正常</span>
+                <span>|</span>
+                <span>活动会话: 3</span>
+                <span>|</span>
+                <span>高危拦截: 激活</span>
+              </div>
+              <div>当前模式: Terminal · UTF-8</div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 阿里云 WebSSH 手感</span>
+            <span>· 1:1 PTY 共享无感知同步</span>
+            <span>· 零跳动统一侧边栏架构</span>
+          </div>
+          <div class="text-gray-500">01 / 06</div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 2: Terminal AI 智能运维对话 (In-Session Ops Dialogue) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>SLIDE 02 · 终端智能运维与执行闭环</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              单机深度协同 · 1:1 PTY 绑定的流式智能体
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              每个 Shell 拥有专属上下文与历史存储。AI 自动感知 CWD、执行工具流并实时回显，高危指令步步确认。
+            </p>
+          </div>
+          <div class="hidden md:flex items-center gap-2 font-mono text-xs text-gray-400">
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-emerald-400 font-semibold">会话隔离</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-cyan-400 font-semibold">ANSI 微型控制台</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-amber-400 font-semibold">高危拦截与核准</span>
+          </div>
+        </div>
+
+        <!-- Main Content Grid (Split 2 Columns) -->
+        <div class="my-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-center w-full max-w-[1240px] mx-auto">
+          
+          <!-- Left Column: Terminal Live View (5 Cols) -->
+          <div class="lg:col-span-5 h-[480px] rounded-xl overflow-hidden glass-panel border border-[#2a2a2a] bg-[#121212] flex flex-col shadow-2xl">
+            <!-- Terminal Header -->
+            <div class="h-9 border-b border-[#2a2a2a] bg-[#181818] px-3 flex items-center justify-between shrink-0 font-mono text-xs">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-[#ff5f56]"></span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]"></span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#27c93f]"></span>
+                <span class="text-gray-400 ml-2 font-semibold">prod-01 (SSH)</span>
+              </div>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400">PTY 同步就绪</span>
+            </div>
+
+            <!-- Terminal Tab Bar -->
+            <div class="h-7 border-b border-[#2a2a2a] bg-[#141414] px-2 flex items-center gap-1 font-mono text-xs">
+              <div class="h-full px-2.5 flex items-center gap-1.5 bg-[#171717] border-b-2 border-emerald-400 text-white font-medium">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>Shell 1 (/etc/nginx)</span>
+              </div>
+              <div class="h-full px-2.5 flex items-center gap-1.5 text-gray-500 hover:text-gray-300">
+                <span>Shell 2 (/var/log)</span>
+              </div>
+            </div>
+
+            <!-- Terminal Output Buffer -->
+            <div class="flex-1 p-3.5 font-terminal text-[12px] leading-relaxed text-gray-300 overflow-y-auto space-y-1 bg-[#171717]">
+              <div class="text-gray-500">Connected to prod-01 (192.168.1.101:22)</div>
+              <div><span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">~</span># cd /etc/nginx</div>
+              <div><span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">/etc/nginx</span># ls -F</div>
+              <div class="text-gray-400">conf.d/  mime.types  nginx.conf  sites-available/  sites-enabled/</div>
+              
+              <div class="my-2 p-2 rounded bg-indigo-950/30 border border-indigo-500/30 text-indigo-200">
+                <div class="text-[10px] text-indigo-400 font-semibold">[AI Agent 共享 PTY 工具调用]</div>
+                <div class="text-white">root@prod-01:/etc/nginx# nginx -t</div>
+                <div class="text-gray-300 text-[11px]">nginx: the configuration file /etc/nginx/nginx.conf syntax is ok</div>
+                <div class="text-gray-300 text-[11px]">nginx: configuration file /etc/nginx/nginx.conf test is successful</div>
+                <div class="text-emerald-400 text-[10px] mt-1">[Command Completed: Exit Code 0, Duration: 38ms]</div>
+              </div>
+
+              <div>
+                <span class="text-emerald-400">root@prod-01</span>:<span class="text-blue-400">/etc/nginx</span># <span class="cursor-blink text-emerald-400 font-bold">_</span>
+              </div>
+            </div>
+
+            <!-- Terminal Shell Hook CWD Notice -->
+            <div class="p-2 border-t border-[#2a2a2a] bg-[#141414] text-[10px] font-mono text-gray-500 flex items-center justify-between">
+              <span>实时感知路径: /etc/nginx</span>
+              <span class="text-emerald-400">Shell Hook 已注入</span>
+            </div>
+          </div>
+
+          <!-- Right Column: AI Agent Ops Dialogue Card (7 Cols) -->
+          <div class="lg:col-span-7 h-[480px] rounded-xl overflow-hidden glass-panel border border-[#2a2a2a] bg-[#161616] flex flex-col shadow-2xl">
+            
+            <!-- Agent Header Context Bar -->
+            <div class="p-3.5 border-b border-[#2a2a2a] bg-[#1c1c1c] flex items-center justify-between shrink-0">
+              <div class="flex items-center gap-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+                <div>
+                  <div class="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>AI 智能运维</span>
+                    <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-gray-300 border border-white/10">绑定期: Shell 1</span>
+                  </div>
+                  <div class="text-[11px] font-mono text-gray-400 mt-0.5">
+                    目标主机: <strong class="text-white">prod-01</strong> · 路径: <strong class="text-emerald-400">/etc/nginx</strong>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Permission Mode Toggle Switch -->
+              <div class="flex items-center rounded-lg border border-[#2a2a2a] bg-[#121212] p-0.5 font-mono text-xs">
+                <span class="px-2 py-1 text-gray-500">只读</span>
+                <span class="px-2.5 py-1 rounded bg-white/10 text-emerald-400 font-bold border border-emerald-500/20">确认</span>
+                <span class="px-2 py-1 text-gray-500">自动</span>
+              </div>
+            </div>
+
+            <!-- Conversation Stream -->
+            <div class="flex-1 p-4 space-y-3.5 overflow-y-auto text-xs">
+              
+              <!-- User Message -->
+              <div class="flex justify-end">
+                <div class="max-w-[85%] rounded-xl p-3 bg-emerald-400 text-black font-medium leading-relaxed shadow-lg shadow-emerald-500/10">
+                  帮我检查当前 Nginx 配置文件语法，确认无误后重新加载服务。
+                </div>
+              </div>
+
+              <!-- AI Agent Reasoning & Execution Flow -->
+              <div class="space-y-2.5 max-w-[92%]">
+                <div class="text-gray-300 leading-relaxed">
+                  收到。正在调用终端工具检测 <code class="text-emerald-400 font-mono">/etc/nginx/nginx.conf</code> 的语法完整性。
+                </div>
+
+                <!-- Structured Tool Call Card: terminal_exec -->
+                <div class="rounded-lg border border-[#2a2a2a] bg-[#1c1c1c] p-3 font-mono text-xs space-y-1.5">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-white/5">
+                    <div class="flex items-center gap-1.5 text-indigo-400 font-semibold">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"/></svg>
+                      <span>terminal_exec</span>
+                    </div>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-semibold">退出码: 0 (38ms)</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px]">命令: <code class="text-amber-300 font-mono">nginx -t</code></div>
+                  <div class="p-2 rounded bg-black/40 text-[11px] text-gray-300 font-terminal leading-snug">
+                    syntax is ok<br>test is successful
+                  </div>
+                </div>
+
+                <!-- Safe Approval Card (Human in the loop) -->
+                <div class="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 font-mono text-xs space-y-2">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-amber-500/20">
+                    <div class="flex items-center gap-1.5 text-amber-400 font-bold">
+                      <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                      <span>待核准高危操作: 重新加载服务</span>
+                    </div>
+                    <span class="text-[10px] text-amber-400/80">操作仅作用于当前会话</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px] space-y-0.5">
+                    <div>目标主机: <strong class="text-white">prod-01 (192.168.1.101)</strong></div>
+                    <div>执行指令: <code class="text-amber-300 font-mono">systemctl reload nginx</code></div>
+                  </div>
+                  <div class="flex items-center justify-end gap-2 pt-1">
+                    <button onclick="triggerApprovalToast(false, 'prod-01', 'systemctl reload nginx')" class="px-3 py-1 rounded border border-gray-600 hover:bg-white/5 text-gray-300 text-xs cursor-pointer">拒绝</button>
+                    <button onclick="triggerApprovalToast(true, 'prod-01', 'systemctl reload nginx')" class="px-3.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs shadow-md cursor-pointer">核准执行</button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Agent Input Bar -->
+            <div class="p-3 border-t border-[#2a2a2a] bg-[#1c1c1c] flex items-center gap-2">
+              <input type="text" value="输入运维指令，例如：检查 80 端口占用情况..." class="flex-1 px-3 py-2 rounded-lg bg-[#121212] border border-[#2a2a2a] text-xs font-mono text-gray-300 outline-none" readonly>
+              <button class="px-4 py-2 rounded-lg bg-emerald-400 text-black font-bold text-xs">发送</button>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 1:1 Shell 独立会话绑定</span>
+            <span>· 实时 ANSI 彩色控制台</span>
+            <span>· 确定性权限拦截 (只读 / 确认 / 自动)</span>
+          </div>
+          <div class="text-gray-500">02 / 06</div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 3: Workspace 工作区架构 (Multi-Host Selection & Overview) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+              <span>SLIDE 03 · 运维工作区拓扑</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              运维工作区 · 跨服务器集群感知与范围编排
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              告别单机跳板机繁琐切换。通过侧边栏自由勾选目标节点，AI 智能体直接对多机拓扑形成完整认知。
+            </p>
+          </div>
+          <div class="hidden md:flex items-center gap-2 font-mono text-xs text-gray-400">
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-cyan-400 font-semibold">多机拓扑选择</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-emerald-400 font-semibold">权限隔离范围</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-indigo-400 font-semibold">并发 SSH 引擎</span>
+          </div>
+        </div>
+
+        <!-- High-Fidelity Workspace Mockup -->
+        <div class="my-auto flex justify-center items-center w-full">
+          <div class="w-full max-w-[1240px] h-[520px] rounded-xl overflow-hidden glass-panel glow-cyan flex flex-col bg-[#121212] border border-[#2a2a2a] shadow-2xl">
+            
+            <!-- Window TitleBar -->
+            <div class="h-10 border-b border-[#2a2a2a] bg-[#181818] flex items-center justify-between px-3 shrink-0 font-mono text-xs">
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-[#ff5f56]"></span>
+                <span class="w-3 h-3 rounded-full bg-[#ffbd2e]"></span>
+                <span class="w-3 h-3 rounded-full bg-[#27c93f]"></span>
+                <span class="text-white font-semibold ml-2">TINI TERMINAL · WORKSPACE MODE</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  当前勾选: 2 台目标主机已就绪
+                </span>
+              </div>
+            </div>
+
+            <!-- App Inner: Sidebar + Workspace Canvas -->
+            <div class="flex-1 flex overflow-hidden">
+              
+              <!-- Left Sidebar: Multi-Host Selection Tree -->
+              <div class="w-64 border-r border-[#2a2a2a] bg-[#141414] flex flex-col shrink-0">
+                <!-- Mode Switcher -->
+                <div class="p-2 border-b border-[#2a2a2a] bg-[#181818]">
+                  <div class="flex rounded-lg bg-[#1c1c1c] p-0.5 border border-[#2a2a2a] text-xs font-mono">
+                    <button class="flex-1 py-1 rounded text-gray-400 hover:text-white text-center">Terminal</button>
+                    <button class="flex-1 py-1 rounded bg-emerald-400 text-black font-semibold text-center">Workspace</button>
+                  </div>
+                </div>
+
+                <!-- Scope Controller -->
+                <div class="p-2.5 border-b border-[#2a2a2a] bg-[#1c1c1c] flex items-center justify-between text-xs font-mono">
+                  <label class="flex items-center gap-1.5 cursor-pointer text-gray-200">
+                    <input type="checkbox" id="check-all-hosts" checked onchange="toggleAllHosts(this.checked)" class="w-3.5 h-3.5 accent-emerald-500 rounded">
+                    <span>全选目标主机</span>
+                  </label>
+                  <span id="selected-host-count" class="text-emerald-400 text-[11px]">2 / 3 台已选</span>
+                </div>
+
+                <!-- Host Tree Groups -->
+                <div class="flex-1 p-2 space-y-3 overflow-y-auto text-xs font-mono">
+                  <!-- Group 1: 生产集群 -->
+                  <div>
+                    <div class="text-[11px] text-gray-400 font-bold px-1.5 mb-1.5 flex justify-between">
+                      <span>生产集群</span>
+                      <span>2</span>
+                    </div>
+                    <div class="space-y-1">
+                      <!-- Host 1 (Selected) -->
+                      <div class="p-2 rounded bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                          <input type="checkbox" checked onchange="updateHostCheck()" class="host-check w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer">
+                          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                          <span class="text-white font-bold">prod-01</span>
+                        </div>
+                        <span class="text-[10px] px-1 rounded bg-emerald-500/20 text-emerald-400">192.168.1.101</span>
+                      </div>
+                      <!-- Host 2 (Selected) -->
+                      <div class="p-2 rounded bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                          <input type="checkbox" checked onchange="updateHostCheck()" class="host-check w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer">
+                          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                          <span class="text-white font-bold">prod-02</span>
+                        </div>
+                        <span class="text-[10px] px-1 rounded bg-emerald-500/20 text-emerald-400">192.168.1.102</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Group 2: 测试集群 -->
+                  <div>
+                    <div class="text-[11px] text-gray-500 font-bold px-1.5 mb-1.5 flex justify-between">
+                      <span>开发与测试</span>
+                      <span>1</span>
+                    </div>
+                    <!-- Host 3 (Unselected) -->
+                    <div class="p-2 rounded hover:bg-white/5 border border-transparent flex items-center justify-between opacity-60">
+                      <div class="flex items-center gap-2">
+                        <input type="checkbox" onchange="updateHostCheck()" class="host-check w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer">
+                        <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+                        <span class="text-gray-300">dev-01</span>
+                      </div>
+                      <span class="text-[10px] text-gray-500">10.0.0.12</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="p-2.5 border-t border-[#2a2a2a] text-[11px] font-mono text-gray-400 flex justify-between">
+                  <span>目标范围: 生产集群</span>
+                  <button onclick="toggleAllHosts(false)" class="text-emerald-400 cursor-pointer hover:underline">清空已选</button>
+                </div>
+              </div>
+
+              <!-- Right Canvas: Multi-Node Context & Interactive Dashboard -->
+              <div class="flex-1 flex flex-col bg-[#0f1115] overflow-hidden">
+                <!-- Workspace Context Header -->
+                <div class="h-10 border-b border-[#2a2a2a] bg-[#181818] px-4 flex items-center justify-between shrink-0 font-mono text-xs">
+                  <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-1.5 font-bold text-white">
+                      <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                      <span>工作区集群拓扑</span>
+                    </div>
+                    <span class="text-gray-600">|</span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-gray-400 text-[11px]">AI 可见节点:</span>
+                      <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold">prod-01</span>
+                      <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold">prod-02</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <div class="flex items-center rounded border border-[#2a2a2a] bg-[#121212] p-0.5 text-xs">
+                      <span class="px-2 py-0.5 text-gray-500">只读</span>
+                      <span class="px-2 py-0.5 rounded bg-white/10 text-emerald-400 font-bold">确认</span>
+                      <span class="px-2 py-0.5 text-gray-500">自动</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Topology Cards Grid -->
+                <div class="p-6 grid grid-cols-2 gap-4">
+                  <!-- Node Card 1 -->
+                  <div class="p-4 rounded-xl border border-emerald-500/30 bg-[#161a22] space-y-3 font-mono">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                        <span class="text-sm font-bold text-white">prod-01 (主节点)</span>
+                      </div>
+                      <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">活动源节点</span>
+                    </div>
+                    <div class="text-xs text-gray-400 space-y-1">
+                      <div>IP: <strong class="text-gray-200">192.168.1.101:22</strong></div>
+                      <div>系统: Ubuntu 24.04 LTS (Kernel 6.8.0)</div>
+                      <div>核心服务: Nginx 1.24 · 状态: <span class="text-emerald-400">Active (Running)</span></div>
+                    </div>
+                    <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+                      <span class="text-gray-500">角色: 配置主库</span>
+                      <span class="text-indigo-400">可调用 host_exec, host_file_read</span>
+                    </div>
+                  </div>
+
+                  <!-- Node Card 2 -->
+                  <div class="p-4 rounded-xl border border-cyan-500/30 bg-[#161a22] space-y-3 font-mono">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+                        <span class="text-sm font-bold text-white">prod-02 (备节点)</span>
+                      </div>
+                      <span class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-bold">目标同步节点</span>
+                    </div>
+                    <div class="text-xs text-gray-400 space-y-1">
+                      <div>IP: <strong class="text-gray-200">192.168.1.102:22</strong></div>
+                      <div>系统: Ubuntu 24.04 LTS (Kernel 6.8.0)</div>
+                      <div>核心服务: Nginx 1.24 · 状态: <span class="text-amber-400">Inactive (待同步)</span></div>
+                    </div>
+                    <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+                      <span class="text-gray-500">角色: 待发布节点</span>
+                      <span class="text-indigo-400">可调用 host_file_write, host_exec</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Preset Intent Templates Bar -->
+                <div class="mt-auto p-4 border-t border-[#2a2a2a] bg-[#141414] space-y-2 font-mono">
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-gray-400">快捷跨机运维编排:</span>
+                    <button class="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-gray-300 text-[11px] hover:bg-white/10">跨机 Nginx 配置比对与同步</button>
+                    <button class="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-gray-300 text-[11px] hover:bg-white/10">生产集群磁盘健康度全面体检</button>
+                    <button class="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-gray-300 text-[11px] hover:bg-white/10">多节点日志联动处置与封禁</button>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 树形主机勾选范围</span>
+            <span>· 隔离式节点可见性设计</span>
+            <span>· 跨服务器拓扑一体化管理</span>
+          </div>
+          <div class="text-gray-500">03 / 06</div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 4: Workspace Agent 整体对话 (Autonomous Multi-Host Workflow) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+              <span>SLIDE 04 · 跨机自主协同编排</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              多机协同推理 · 全自动复合运维任务闭环
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              AI 自主拆解跨机依赖链路，在不同主机间并发调用工具，完成“读取校验 -> 跨机传输 -> 目标自检 -> 审批启动”。
+            </p>
+          </div>
+          <div class="hidden md:flex items-center gap-2 font-mono text-xs text-gray-400">
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-indigo-400 font-semibold">协同思考链</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-emerald-400 font-semibold">原子分发</span>
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-white/5 text-amber-400 font-semibold">精准节点审批</span>
+          </div>
+        </div>
+
+        <!-- High-Fidelity Multi-Host Conversation View -->
+        <div class="my-auto flex justify-center items-center w-full">
+          <div class="w-full max-w-[1240px] h-[520px] rounded-xl overflow-hidden glass-panel border border-[#2a2a2a] bg-[#121212] flex flex-col shadow-2xl">
+            
+            <!-- Workspace Stream Header -->
+            <div class="h-10 border-b border-[#2a2a2a] bg-[#181818] px-4 flex items-center justify-between shrink-0 font-mono text-xs">
+              <div class="flex items-center gap-3">
+                <span class="text-white font-bold flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span>运维工作区协同对话流</span>
+                </span>
+                <span class="text-gray-600">|</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-gray-400 text-[11px]">执行范围:</span>
+                  <span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] font-bold">prod-01</span>
+                  <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-bold">prod-02</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] px-2.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/30">
+                  执行引擎: Tokio 并发管道就绪
+                </span>
+              </div>
+            </div>
+
+            <!-- Scrollable Conversation Stream -->
+            <div class="flex-1 p-5 space-y-4 overflow-y-auto text-xs font-sans">
+              
+              <!-- User Command -->
+              <div class="flex justify-end">
+                <div class="max-w-[70%] rounded-xl p-3 bg-emerald-400 text-black font-semibold leading-relaxed shadow-lg">
+                  检查 prod-01 上的 Nginx 配置文件语法并提取配置，同步部署到 prod-02，测试语法通过后启动 prod-02 上的服务。
+                </div>
+              </div>
+
+              <!-- AI Multi-Step Autonomous Stream -->
+              <div class="space-y-3 max-w-[85%] font-mono">
+                
+                <!-- Thinking Reasoning Chain Card -->
+                <div class="rounded-lg border border-[#2a2a2a] bg-[#181818] p-3 text-[11px] space-y-1.5">
+                  <div class="flex items-center justify-between text-emerald-400 font-bold border-b border-white/5 pb-1">
+                    <div class="flex items-center gap-1.5">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                      <span>跨机协同推理链 (Thinking · 1.8s)</span>
+                    </div>
+                    <span class="text-gray-400 font-normal">4 步原子拆解</span>
+                  </div>
+                  <div class="text-gray-300 leading-relaxed space-y-0.5">
+                    <div>1. 校验源节点 <span class="text-blue-400 font-bold">prod-01</span> 语法并导出配置 (/etc/nginx/nginx.conf)</div>
+                    <div>2. 跨机传输配置并写入目标节点 <span class="text-emerald-400 font-bold">prod-02</span></div>
+                    <div>3. 在 <span class="text-emerald-400 font-bold">prod-02</span> 执行语法自检 (nginx -t)</div>
+                    <div>4. 申请启动服务高危审批并在 <span class="text-emerald-400 font-bold">prod-02</span> 启动服务</div>
+                  </div>
+                </div>
+
+                <!-- Step 1 Tool Call: prod-01 -->
+                <div class="rounded-lg border border-[#2a2a2a] bg-[#1c1c1c] p-2.5 text-xs space-y-1">
+                  <div class="flex items-center justify-between border-b border-white/5 pb-1">
+                    <div class="flex items-center gap-2">
+                      <span class="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30 text-[10px]">prod-01</span>
+                      <span class="text-indigo-400 font-semibold">host_exec</span>
+                    </div>
+                    <span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">退出码: 0 (32ms)</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px]">命令: <code class="text-amber-300">nginx -t && cat /etc/nginx/nginx.conf</code></div>
+                  <div class="text-[10px] text-gray-400 bg-black/40 p-1.5 rounded font-terminal">
+                    syntax is ok · test is successful<br>
+                    # 已提取配置内容: 1440 字节 (MD5: 8f4a12c8...)
+                  </div>
+                </div>
+
+                <!-- Step 2 Tool Call: prod-02 -->
+                <div class="rounded-lg border border-[#2a2a2a] bg-[#1c1c1c] p-2.5 text-xs space-y-1">
+                  <div class="flex items-center justify-between border-b border-white/5 pb-1">
+                    <div class="flex items-center gap-2">
+                      <span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 text-[10px]">prod-02</span>
+                      <span class="text-emerald-400 font-semibold">host_file_write</span>
+                    </div>
+                    <span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">写入成功 (18ms)</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px]">目标路径: <code class="text-amber-300">/etc/nginx/nginx.conf</code> (已覆盖同步)</div>
+                </div>
+
+                <!-- Step 3 Tool Call: prod-02 self-test -->
+                <div class="rounded-lg border border-[#2a2a2a] bg-[#1c1c1c] p-2.5 text-xs space-y-1">
+                  <div class="flex items-center justify-between border-b border-white/5 pb-1">
+                    <div class="flex items-center gap-2">
+                      <span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 text-[10px]">prod-02</span>
+                      <span class="text-indigo-400 font-semibold">host_exec</span>
+                    </div>
+                    <span class="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">退出码: 0 (24ms)</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px]">命令: <code class="text-amber-300">nginx -t</code> -> 语法测试通过</div>
+                </div>
+
+                <!-- Step 4 Approval Card: Targeted to prod-02 -->
+                <div class="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs space-y-2">
+                  <div class="flex items-center justify-between border-b border-amber-500/20 pb-1.5">
+                    <div class="flex items-center gap-2 text-amber-400 font-bold">
+                      <span class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px]">prod-02</span>
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                      <span>高危操作核准: 启动服务</span>
+                    </div>
+                    <span class="text-[10px] text-amber-300/80">操作仅影响节点 prod-02</span>
+                  </div>
+                  <div class="text-gray-300 text-[11px]">
+                    待执行命令: <code class="text-amber-300 font-mono">systemctl start nginx</code>
+                  </div>
+                  <div class="flex items-center justify-end gap-2 pt-1">
+                    <button onclick="triggerApprovalToast(false, 'prod-02', 'systemctl start nginx')" class="px-3 py-1 rounded border border-gray-600 hover:bg-white/5 text-gray-300 text-xs cursor-pointer">拒绝</button>
+                    <button onclick="triggerApprovalToast(true, 'prod-02', 'systemctl start nginx')" class="px-3.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs shadow-md cursor-pointer">核准执行</button>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            <!-- Bottom Quick Input -->
+            <div class="p-3 border-t border-[#2a2a2a] bg-[#181818] flex items-center gap-2">
+              <input type="text" value="输入集群运维诉求，AI 可直接访问勾选的主机协同完成任务..." class="flex-1 px-3 py-2 rounded-lg bg-[#121212] border border-[#2a2a2a] text-xs font-mono text-gray-300 outline-none" readonly>
+              <button class="px-4 py-2 rounded-lg bg-emerald-400 text-black font-bold text-xs">发送</button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 跨服务器意图自动分解</span>
+            <span>· 零跳板机本地直连各节点</span>
+            <span>· 精准目标节点授权与审计</span>
+          </div>
+          <div class="text-gray-500">04 / 06</div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 5: 多主题矩阵 (Theme Showcase) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-purple-500/10 border border-purple-500/20 text-purple-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+              <span>SLIDE 05 · 专业级主题体系</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              内置 5 套极客与开发者专属主题
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              深度适配终端与外围 UI 颜色系统。包含极黑默认主题、VS Code 经典色系、GitHub 双色调及 One Dark Pro。
+            </p>
+          </div>
+          <!-- Theme Preview Badges -->
+          <div class="hidden lg:flex items-center gap-2 font-mono text-xs">
+            <span class="px-2.5 py-1 rounded bg-[#121212] border border-emerald-500/40 text-emerald-400 font-semibold">默认主题</span>
+            <span class="px-2.5 py-1 rounded bg-[#1e1e1e] border border-blue-500/40 text-blue-400 font-semibold">VS Code Dark+</span>
+            <span class="px-2.5 py-1 rounded bg-[#0d1117] border border-sky-500/40 text-sky-400 font-semibold">GitHub Dark</span>
+            <span class="px-2.5 py-1 rounded bg-[#282c34] border border-purple-500/40 text-purple-400 font-semibold">One Dark</span>
+            <span class="px-2.5 py-1 rounded bg-[#ffffff] text-black font-semibold">GitHub Light</span>
+          </div>
+        </div>
+
+        <!-- 5-Theme Interactive Visual Cards Grid -->
+        <div class="my-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 w-full max-w-[1240px] mx-auto">
+          
+          <!-- Theme 1: 默认主题 (Aliyun Dark) -->
+          <div onclick="selectThemeCard(0, '默认主题 (Aliyun Dark)')" class="theme-card cursor-pointer rounded-xl p-4 bg-[#121212] border-2 border-emerald-500/50 shadow-xl flex flex-col justify-between h-[420px]">
+            <div>
+              <div class="flex items-center justify-between pb-2 border-b border-white/10 font-mono">
+                <span class="text-xs font-bold text-white">默认主题</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#23d18b]"></span>
+              </div>
+              <p class="text-[11px] text-gray-400 mt-2 font-sans">低对比度极黑底色，高亮翡翠绿点缀，专为长时间夜间运维打磨。</p>
+              
+              <!-- Mini Terminal Preview -->
+              <div class="mt-4 p-2.5 rounded-lg bg-[#171717] border border-white/5 font-terminal text-[11px] space-y-1 text-gray-300">
+                <div class="text-[10px] text-gray-500">prod-01 (192.168.1.101)</div>
+                <div><span class="text-[#23d18b]">root@prod</span>:<span class="text-[#3b8eea]">~</span>$ cd /var/log</div>
+                <div class="text-[#fbe749]">nginx: ok</div>
+                <div class="text-[#23d18b]">$ status: 200</div>
+              </div>
+
+              <!-- Color Palette Chips -->
+              <div class="mt-4 space-y-1.5 font-mono text-[10px]">
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>强调色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#23d18b]"></span> #23d18b</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>背景底色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#121212]"></span> #121212</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-white/10 text-center">
+              <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold">点击预览激活</span>
+            </div>
+          </div>
+
+          <!-- Theme 2: VS Code Dark+ -->
+          <div onclick="selectThemeCard(1, 'VS Code Dark+')" class="theme-card cursor-pointer rounded-xl p-4 bg-[#181818] border border-[#333333] shadow-xl flex flex-col justify-between h-[420px]">
+            <div>
+              <div class="flex items-center justify-between pb-2 border-b border-white/10 font-mono">
+                <span class="text-xs font-bold text-white">VS Code Dark+</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#0078d4]"></span>
+              </div>
+              <p class="text-[11px] text-gray-400 mt-2 font-sans">100% 还原微软经典 IDE 配色，编辑器与终端无缝一体。</p>
+              
+              <!-- Mini Terminal Preview -->
+              <div class="mt-4 p-2.5 rounded-lg bg-[#1e1e1e] border border-white/5 font-terminal text-[11px] space-y-1 text-gray-300">
+                <div class="text-[10px] text-gray-500">prod-01 (192.168.1.101)</div>
+                <div><span class="text-[#0dbc79]">root@prod</span>:<span class="text-[#2472c8]">~</span>$ docker ps</div>
+                <div class="text-[#e5e510]">CONTAINER ID</div>
+                <div class="text-[#0dbc79]">Up 3 days</div>
+              </div>
+
+              <!-- Color Palette Chips -->
+              <div class="mt-4 space-y-1.5 font-mono text-[10px]">
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>强调色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#0078d4]"></span> #0078d4</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>背景底色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#181818]"></span> #181818</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-white/10 text-center">
+              <span class="text-[10px] text-gray-400 font-mono">点击预览激活</span>
+            </div>
+          </div>
+
+          <!-- Theme 3: GitHub Dark -->
+          <div onclick="selectThemeCard(2, 'GitHub Dark')" class="theme-card cursor-pointer rounded-xl p-4 bg-[#010409] border border-[#30363d] shadow-xl flex flex-col justify-between h-[420px]">
+            <div>
+              <div class="flex items-center justify-between pb-2 border-b border-white/10 font-mono">
+                <span class="text-xs font-bold text-white">GitHub Dark</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#2f81f7]"></span>
+              </div>
+              <p class="text-[11px] text-gray-400 mt-2 font-sans">GitHub 官方暗黑规范，深邃黑底配合高对比荧光标识。</p>
+              
+              <!-- Mini Terminal Preview -->
+              <div class="mt-4 p-2.5 rounded-lg bg-[#0d1117] border border-white/5 font-terminal text-[11px] space-y-1 text-gray-300">
+                <div class="text-[10px] text-gray-500">prod-01 (192.168.1.101)</div>
+                <div><span class="text-[#3fb950]">root@prod</span>:<span class="text-[#58a6ff]">~</span>$ git status</div>
+                <div class="text-[#d29922]">On branch main</div>
+                <div class="text-[#3fb950]">nothing to commit</div>
+              </div>
+
+              <!-- Color Palette Chips -->
+              <div class="mt-4 space-y-1.5 font-mono text-[10px]">
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>强调色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#2f81f7]"></span> #2f81f7</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>背景底色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#010409]"></span> #010409</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-white/10 text-center">
+              <span class="text-[10px] text-gray-400 font-mono">点击预览激活</span>
+            </div>
+          </div>
+
+          <!-- Theme 4: One Dark Pro -->
+          <div onclick="selectThemeCard(3, 'One Dark Pro')" class="theme-card cursor-pointer rounded-xl p-4 bg-[#21252b] border border-[#3e4451] shadow-xl flex flex-col justify-between h-[420px]">
+            <div>
+              <div class="flex items-center justify-between pb-2 border-b border-white/10 font-mono">
+                <span class="text-xs font-bold text-white">One Dark Pro</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#61afef]"></span>
+              </div>
+              <p class="text-[11px] text-gray-400 mt-2 font-sans">Atom 时代传承的经典色盘，舒适护眼的青蓝与暖紫渐变调性。</p>
+              
+              <!-- Mini Terminal Preview -->
+              <div class="mt-4 p-2.5 rounded-lg bg-[#282c34] border border-white/5 font-terminal text-[11px] space-y-1 text-gray-300">
+                <div class="text-[10px] text-gray-500">prod-01 (192.168.1.101)</div>
+                <div><span class="text-[#98c379]">root@prod</span>:<span class="text-[#61afef]">~</span>$ htop</div>
+                <div class="text-[#e5c07b]">Tasks: 42, 1 thr</div>
+                <div class="text-[#c678dd]">Mem: 2.1G/16G</div>
+              </div>
+
+              <!-- Color Palette Chips -->
+              <div class="mt-4 space-y-1.5 font-mono text-[10px]">
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>强调色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#61afef]"></span> #61afef</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-400">
+                  <span>背景底色</span>
+                  <span class="flex items-center gap-1 font-bold text-white"><span class="w-2 h-2 rounded-full bg-[#21252b]"></span> #21252b</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-white/10 text-center">
+              <span class="text-[10px] text-gray-400 font-mono">点击预览激活</span>
+            </div>
+          </div>
+
+          <!-- Theme 5: GitHub Light -->
+          <div onclick="selectThemeCard(4, 'GitHub Light')" class="theme-card cursor-pointer rounded-xl p-4 bg-[#ffffff] text-black border border-[#d0d7de] shadow-xl flex flex-col justify-between h-[420px]">
+            <div>
+              <div class="flex items-center justify-between pb-2 border-b border-gray-200 font-mono">
+                <span class="text-xs font-bold text-gray-900">GitHub Light</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-[#0969da]"></span>
+              </div>
+              <p class="text-[11px] text-gray-600 mt-2 font-sans">白昼模式专属。清晰锐利的黑白对比与高饱和状态色。</p>
+              
+              <!-- Mini Terminal Preview -->
+              <div class="mt-4 p-2.5 rounded-lg bg-[#f6f8fa] border border-[#d0d7de] font-terminal text-[11px] space-y-1 text-gray-800">
+                <div class="text-[10px] text-gray-500">prod-01 (192.168.1.101)</div>
+                <div><span class="text-[#116329]">root@prod</span>:<span class="text-[#0969da]">~</span>$ tail log</div>
+                <div class="text-[#cf222e]">ERROR 404 Not Found</div>
+                <div class="text-[#116329]">HTTP 200 Success</div>
+              </div>
+
+              <!-- Color Palette Chips -->
+              <div class="mt-4 space-y-1.5 font-mono text-[10px]">
+                <div class="flex items-center justify-between text-gray-600">
+                  <span>强调色</span>
+                  <span class="flex items-center gap-1 font-bold text-gray-900"><span class="w-2 h-2 rounded-full bg-[#0969da]"></span> #0969da</span>
+                </div>
+                <div class="flex items-center justify-between text-gray-600">
+                  <span>背景底色</span>
+                  <span class="flex items-center gap-1 font-bold text-gray-900"><span class="w-2 h-2 rounded-full bg-[#f6f8fa] border border-gray-300"></span> #ffffff</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-gray-200 text-center">
+              <span class="text-[10px] text-gray-500 font-mono">点击预览激活</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 5 套内置官方配色</span>
+            <span>· 终端与 UI 像素级色彩联动</span>
+            <span>· 支持 11px~22px 字体无级缩放</span>
+          </div>
+          <div class="text-gray-500">05 / 06</div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- SLIDE 6: 品牌标识与设计理念 (Artistic Logo & Core Values) -->
+      <!-- ==================================================================== -->
+      <section class="slide">
+        <!-- Slide Header Info -->
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mb-3">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>SLIDE 06 · 品牌理念与愿景</span>
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+              Tini Terminal · 重新定义 AI 时代基础设施运维
+            </h1>
+            <p class="text-sm text-gray-400 mt-1.5 max-w-2xl">
+              不仅是一个终端客户端，更是一套连接本地极客手感与自主智能体集群的现代基础设施。
+            </p>
+          </div>
+          <div class="hidden md:flex items-center gap-2 font-mono text-xs text-emerald-400">
+            <span class="px-2.5 py-1 rounded bg-white/5 border border-emerald-500/30 font-bold">本地优先 · 隐私安全 · 开源内核</span>
+          </div>
+        </div>
+
+        <!-- Artistic Hero Logo & Core Value Pillars -->
+        <div class="my-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center w-full max-w-[1240px] mx-auto">
+          
+          <!-- Left: Glowing Artistic Vector Logo (5 Cols) -->
+          <div class="lg:col-span-5 flex flex-col items-center text-center">
+            <!-- Pulsing Cyber Ring -->
+            <div class="relative w-64 h-64 flex items-center justify-center">
+              <div class="absolute inset-0 rounded-full bg-emerald-500/10 filter blur-3xl animate-pulse"></div>
+              <div class="absolute -inset-2 rounded-3xl border border-emerald-500/20 glow-green"></div>
+              
+              <!-- Actual SVG Logo Embed -->
+              <svg viewBox="0 0 512 512" class="w-60 h-60 z-10 drop-shadow-2xl" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <radialGradient id="bgGlowHero" cx="42%" cy="38%" r="58%">
+                    <stop offset="0%" stop-color="#22c55e" stop-opacity="0.25"/>
+                    <stop offset="55%" stop-color="#14b8a6" stop-opacity="0.1"/>
+                    <stop offset="100%" stop-color="#0d0d0d" stop-opacity="0"/>
+                  </radialGradient>
+                  <linearGradient id="promptGradHero" x1="0%" y1="0%" x2="80%" y2="100%">
+                    <stop offset="0%" stop-color="#4ade80"/>
+                    <stop offset="100%" stop-color="#16a34a"/>
+                  </linearGradient>
+                  <linearGradient id="cursorGradHero" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stop-color="#2dd4bf"/>
+                    <stop offset="100%" stop-color="#0d9488"/>
+                  </linearGradient>
+                </defs>
+                <rect width="512" height="512" rx="112" fill="#0e1217"/>
+                <rect width="512" height="512" rx="112" fill="url(#bgGlowHero)"/>
+                <rect x="3" y="3" width="506" height="506" rx="110" fill="none" stroke="#22c55e" stroke-width="2" opacity="0.3"/>
+                <!-- Terminal Prompt > -->
+                <path d="M168 196 L292 256 L168 316" fill="none" stroke="url(#promptGradHero)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+                <!-- Cursor Block _ -->
+                <rect x="322" y="232" width="30" height="48" rx="6" fill="url(#cursorGradHero)"/>
+                <!-- AI Neural Node Cluster -->
+                <g opacity="0.85">
+                  <line x1="337" y1="232" x2="378" y2="178" stroke="#4ade80" stroke-width="3" stroke-linecap="round"/>
+                  <line x1="378" y1="178" x2="412" y2="205" stroke="#14b8a6" stroke-width="3" stroke-linecap="round"/>
+                  <line x1="378" y1="178" x2="350" y2="150" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+                  <circle cx="378" cy="178" r="9" fill="#4ade80"/>
+                  <circle cx="412" cy="205" r="7" fill="#14b8a6"/>
+                  <circle cx="350" cy="150" r="6" fill="#4ade80" opacity="0.7"/>
+                </g>
+              </svg>
+            </div>
+
+            <!-- Brand Typography -->
+            <div class="mt-6 space-y-1">
+              <h2 class="text-2xl font-black tracking-wider text-white font-mono">TINI TERMINAL</h2>
+              <p class="text-xs font-mono text-emerald-400 font-semibold tracking-widest uppercase">
+                AI-Native Server Operations Engine
+              </p>
+            </div>
+          </div>
+
+          <!-- Right: 4 Pillar Philosophy Cards (7 Cols) -->
+          <div class="lg:col-span-7 grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <!-- Pillar 1: Native Terminal Touch -->
+            <div class="p-4 rounded-xl border border-white/10 bg-[#161a22]/80 backdrop-blur-md space-y-2">
+              <div class="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                <span>原生极致手感</span>
+              </div>
+              <p class="text-xs text-gray-300 leading-relaxed">
+                Rust 与 Tokio 打造异步低延迟管道，双向字节流直灌 xterm.js 缓冲区，彻底告别字符跳动与排版对齐错位。
+              </p>
+            </div>
+
+            <!-- Pillar 2: 1:1 Co-Pilot Agent -->
+            <div class="p-4 rounded-xl border border-white/10 bg-[#161a22]/80 backdrop-blur-md space-y-2">
+              <div class="flex items-center gap-2 text-cyan-400 font-mono text-xs font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span>1:1 伴随智能体</span>
+              </div>
+              <p class="text-xs text-gray-300 leading-relaxed">
+                每个 Shell 拥有专属上下文与历史存储。实时自动感知主机、用户与当前工作目录，输出彩色 ANSI 流式控制台。
+              </p>
+            </div>
+
+            <!-- Pillar 3: Multi-Host Cluster -->
+            <div class="p-4 rounded-xl border border-white/10 bg-[#161a22]/80 backdrop-blur-md space-y-2">
+              <div class="flex items-center gap-2 text-indigo-400 font-mono text-xs font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                <span>集群跨机编排</span>
+              </div>
+              <p class="text-xs text-gray-300 leading-relaxed">
+                告别单机跳板机繁琐切换。自由编排目标节点，跨节点一句话完成配置同步、状态对比与批量巡检。
+              </p>
+            </div>
+
+            <!-- Pillar 4: Privacy & Security First -->
+            <div class="p-4 rounded-xl border border-white/10 bg-[#161a22]/80 backdrop-blur-md space-y-2">
+              <div class="flex items-center gap-2 text-amber-400 font-mono text-xs font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <span>本地隐私与安全</span>
+              </div>
+              <p class="text-xs text-gray-300 leading-relaxed">
+                配置与凭证全部本地 SQLite 安全存储。静态正则严格拦截 rm -rf 等破坏性操作，执行指令步步确认。
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- Slide Footer Summary -->
+        <div class="flex items-center justify-between text-xs text-gray-400 font-mono pt-2 border-t border-white/5">
+          <div class="flex items-center gap-6">
+            <span>· 极简 · 极速 · 极客 · 智能</span>
+            <span>· 跨平台支持 (macOS / Linux / Windows)</span>
+            <span>· 阿里云 WebSSH + Cursor Agent 范式</span>
+          </div>
+          <div class="text-gray-500">06 / 06</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Bottom Floating Control Bar -->
+  <footer class="fixed bottom-0 left-0 right-0 h-16 z-50 px-8 flex items-center justify-between border-t border-white/5 bg-[#0a0c10]/80 backdrop-blur-md select-none">
+    
+    <!-- Slide Counter & Label -->
+    <div class="flex items-center gap-3 font-mono text-xs">
+      <span class="text-emerald-400 font-bold" id="bottom-slide-number">01</span>
+      <span class="text-gray-600">/</span>
+      <span class="text-gray-400">06</span>
+      <span class="text-gray-600">|</span>
+      <span class="text-gray-300 font-medium" id="bottom-slide-title">全局全景体验</span>
+    </div>
+
+    <!-- Center Interactive Slide Progress Dots -->
+    <div class="flex items-center gap-2">
+      <button onclick="goToSlide(0)" class="slide-dot w-8 h-1.5 rounded-full transition-all bg-emerald-400 cursor-pointer" id="dot-0" title="Slide 1"></button>
+      <button onclick="goToSlide(1)" class="slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer" id="dot-1" title="Slide 2"></button>
+      <button onclick="goToSlide(2)" class="slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer" id="dot-2" title="Slide 3"></button>
+      <button onclick="goToSlide(3)" class="slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer" id="dot-3" title="Slide 4"></button>
+      <button onclick="goToSlide(4)" class="slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer" id="dot-4" title="Slide 5"></button>
+      <button onclick="goToSlide(5)" class="slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer" id="dot-5" title="Slide 6"></button>
+    </div>
+
+    <!-- Navigation Arrow Buttons -->
+    <div class="flex items-center gap-2 font-mono">
+      <button onclick="prevSlide()" id="btn-prev" class="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold flex items-center gap-1.5 cursor-pointer opacity-50 cursor-not-allowed transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <span>上一页</span>
+      </button>
+
+      <button onclick="nextSlide()" id="btn-next" class="px-3.5 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-black text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all">
+        <span>下一页</span>
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+
+  </footer>
+
+
+  <!-- Floating Toast Notification -->
+  <div id="toast-notify" class="fixed top-20 right-8 z-50 transform -translate-y-4 opacity-0 pointer-events-none transition-all duration-300 font-mono text-xs px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-[#12161f]/95 text-emerald-400 shadow-2xl flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+    <span id="toast-message">操作已生效</span>
+  </div>
+
+  <!-- Slide Presentation Controller Script -->
+  <script>
+    let currentSlide = 0;
+    const totalSlides = 6;
+    const slideTitles = [
+      "全局全景体验",
+      "终端智能运维与执行闭环",
+      "运维工作区拓扑",
+      "跨机自主协同编排",
+      "专业级主题体系",
+      "品牌理念与愿景"
+    ];
+
+    const track = document.getElementById('slider-track');
+    const bottomSlideNum = document.getElementById('bottom-slide-number');
+    const bottomSlideTitle = document.getElementById('bottom-slide-title');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+
+    function updatePresentationUI() {
+      // 1. Move Slide Track horizontally
+      track.style.transform = `translateX(-${currentSlide * 100}vw)`;
+
+      // 2. Update Counter & Title
+      bottomSlideNum.textContent = String(currentSlide + 1).padStart(2, '0');
+      bottomSlideTitle.textContent = slideTitles[currentSlide];
+
+      // 3. Update Nav Pills
+      for (let i = 0; i < totalSlides; i++) {
+        const pill = document.getElementById(`nav-pill-${i}`);
+        const dot = document.getElementById(`dot-${i}`);
+
+        if (i === currentSlide) {
+          if (pill) {
+            pill.className = "px-3 py-1.5 rounded-lg transition-all text-black bg-emerald-400 font-semibold cursor-pointer";
+          }
+          if (dot) {
+            dot.className = "slide-dot w-8 h-1.5 rounded-full transition-all bg-emerald-400 cursor-pointer";
+          }
+        } else {
+          if (pill) {
+            pill.className = "px-3 py-1.5 rounded-lg transition-all text-gray-400 hover:text-white cursor-pointer";
+          }
+          if (dot) {
+            dot.className = "slide-dot w-2 h-1.5 rounded-full transition-all bg-white/20 hover:bg-white/40 cursor-pointer";
+          }
+        }
+      }
+
+      // 4. Update Prev / Next button states
+      if (currentSlide === 0) {
+        btnPrev.classList.add('opacity-50', 'cursor-not-allowed');
+      } else {
+        btnPrev.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+
+      if (currentSlide === totalSlides - 1) {
+        btnNext.innerHTML = '<span>重播演示</span> <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
+      } else {
+        btnNext.innerHTML = '<span>下一页</span> <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>';
+      }
+    }
+
+    function goToSlide(index) {
+      if (index >= 0 && index < totalSlides) {
+        currentSlide = index;
+        updatePresentationUI();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updatePresentationUI();
+      }
+    }
+
+    function nextSlide() {
+      if (currentSlide < totalSlides - 1) {
+        currentSlide++;
+        updatePresentationUI();
+      } else {
+        currentSlide = 0;
+        updatePresentationUI();
+      }
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    let toastTimer = null;
+    function showToast(msg, isWarn = false) {
+      const toast = document.getElementById('toast-notify');
+      const toastMsg = document.getElementById('toast-message');
+      if (!toast || !toastMsg) return;
+      toastMsg.textContent = msg;
+      if (isWarn) {
+        toast.className = "fixed top-20 right-8 z-50 transform translate-y-0 opacity-100 transition-all duration-300 font-mono text-xs px-4 py-2.5 rounded-xl border border-amber-500/40 bg-[#1f1612]/95 text-amber-400 shadow-2xl flex items-center gap-2";
+      } else {
+        toast.className = "fixed top-20 right-8 z-50 transform translate-y-0 opacity-100 transition-all duration-300 font-mono text-xs px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-[#12161f]/95 text-emerald-400 shadow-2xl flex items-center gap-2";
+      }
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.className = "fixed top-20 right-8 z-50 transform -translate-y-4 opacity-0 pointer-events-none transition-all duration-300 font-mono text-xs px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-[#12161f]/95 text-emerald-400 shadow-2xl flex items-center gap-2";
+      }, 2500);
+    }
+
+    function triggerApprovalToast(approved, host, cmd) {
+      if (approved) {
+        showToast(`已核准执行 [${host}]: ${cmd} · 命令已由 PTY 执行`);
+      } else {
+        showToast(`已拒绝操作 [${host}]: ${cmd} · 执行流程已终止`, true);
+      }
+    }
+
+    function selectThemeCard(index, name) {
+      showToast(`已切换主题预览: ${name}`);
+      const cards = document.querySelectorAll('.theme-card');
+      cards.forEach((c, idx) => {
+        if (idx === index) {
+          c.classList.add('ring-2', 'ring-emerald-400', 'shadow-emerald-500/20');
+        } else {
+          c.classList.remove('ring-2', 'ring-emerald-400', 'shadow-emerald-500/20');
+        }
+      });
+    }
+
+    function updateHostCheck() {
+      const checks = document.querySelectorAll('.host-check');
+      let count = 0;
+      checks.forEach(c => { if (c.checked) count++; });
+      const label = document.getElementById('selected-host-count');
+      const allCheck = document.getElementById('check-all-hosts');
+      if (label) label.textContent = `${count} / ${checks.length} 台已选`;
+      if (allCheck) allCheck.checked = (count === checks.length);
+      showToast(`已更新集群目标范围: ${count} 台主机纳入执行`);
+    }
+
+    function toggleAllHosts(checked) {
+      const checks = document.querySelectorAll('.host-check');
+      checks.forEach(c => c.checked = checked);
+      const allCheck = document.getElementById('check-all-hosts');
+      if (allCheck) allCheck.checked = checked;
+      const label = document.getElementById('selected-host-count');
+      const count = checked ? checks.length : 0;
+      if (label) label.textContent = `${count} / ${checks.length} 台已选`;
+      showToast(checked ? `已全选所有目标主机 (${count} 台)` : '已清空目标主机范围', !checked);
+    }
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ' || e.key === 'j') {
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'k') {
+        prevSlide();
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key >= '1' && e.key <= '6') {
+        goToSlide(parseInt(e.key, 10) - 1);
+      }
+    });
+
+    // Touch Swipe support
+    let touchStartX = 0;
+    window.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+
+    window.addEventListener('touchend', (e) => {
+      const touchEndX = e.changedTouches[0].clientX;
+      const diffX = touchStartX - touchEndX;
+      if (Math.abs(diffX) > 60) {
+        if (diffX > 0) {
+          nextSlide();
+        } else {
+          prevSlide();
+        }
+      }
+    }, { passive: true });
+
+    // Initialize UI
+    updatePresentationUI();
+  </script>
+</body>
+</html>

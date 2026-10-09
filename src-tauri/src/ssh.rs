@@ -51,9 +51,48 @@ pub struct SshManager {
 
 impl SshManager {
     pub fn new() -> Self {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let sftp_sessions: Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // 启动后台 SFTP 连接心跳保活线程，防止空闲断开与 NAT 超时
+        let sftp_map_clone = Arc::clone(&sftp_sessions);
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(10));
+                let dead_ids: Vec<String> = {
+                    if let Ok(map) = sftp_map_clone.lock() {
+                        let mut dead = Vec::new();
+                        for (id, sess_arc) in map.iter() {
+                            if let Ok(s) = sess_arc.try_lock() {
+                                if !s.authenticated() || s.keepalive_send().is_err() {
+                                    dead.push(id.clone());
+                                }
+                            }
+                        }
+                        dead
+                    } else {
+                        Vec::new()
+                    }
+                };
+
+                if !dead_ids.is_empty() {
+                    if let Ok(mut map) = sftp_map_clone.lock() {
+                        for id in dead_ids {
+                            if let Some(dead_sess) = map.remove(&id) {
+                                if let Ok(s) = dead_sess.lock() {
+                                    let _ = s.disconnect(None, "keepalive timeout", None);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            sftp_sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions,
+            sftp_sessions,
         }
     }
 
@@ -489,16 +528,38 @@ impl SshManager {
         sessions.get(session_id).map(|h| Arc::clone(&h.session))
     }
 
+    pub fn invalidate_sftp_session(&self, session_id: &str) {
+        let mut sftp_map = self.sftp_sessions.lock().unwrap();
+        if let Some(sess_arc) = sftp_map.remove(session_id) {
+            if let Ok(s) = sess_arc.lock() {
+                let _ = s.disconnect(None, "invalidate dead sftp session", None);
+            }
+        }
+    }
+
     pub fn get_or_create_sftp_session(&self, session_id: &str) -> Result<Arc<Mutex<Session>>, String> {
-        // 1. 优先复用已经建立且认证完好的独立 SFTP 专用连接
+        // 1. 优先复用已经建立且认证完好、探测活跃的独立 SFTP 专用连接
         {
-            let sftp_map = self.sftp_sessions.lock().unwrap();
+            let mut is_dead = false;
+            let mut sftp_map = self.sftp_sessions.lock().unwrap();
             if let Some(sess_arc) = sftp_map.get(session_id) {
                 if let Ok(s) = sess_arc.lock() {
                     if s.authenticated() {
-                        return Ok(Arc::clone(sess_arc));
+                        // 探测连接是否仍然有效
+                        if s.keepalive_send().is_ok() {
+                            return Ok(Arc::clone(sess_arc));
+                        } else {
+                            is_dead = true;
+                        }
+                    } else {
+                        is_dead = true;
                     }
+                } else {
+                    is_dead = true;
                 }
+            }
+            if is_dead {
+                sftp_map.remove(session_id);
             }
         }
 

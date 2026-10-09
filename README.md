@@ -1,41 +1,17 @@
-# AI Terminal (AI SSH Client)
+# Tini Terminal
 
-跨平台 AI SSH 终端：一个以高品质 Terminal 为核心、内置 AI Agent 的服务器管理客户端。
-
-项目融合了 **阿里云 WebSSH 的终端手感**、**Claude Code / Cursor 级 Agent 运维能力** 与 **Termius / Xshell 级服务器管理体验**。
+一个跨平台、极简高效且内置 AI Agent 的 SSH 终端工具。融合专业级 WebGL 终端渲染、本地与远程服务器管理以及大模型智能运维能力。
 
 ---
 
-## 核心特性
+## 主要特性
 
-### 1. 阿里云 WebSSH 级终端手感
-- **GPU 硬件加速**：基于 xterm.js 与 WebGL 渲染插件，保障万行高频日志、top/htop 与编译输出流畅无丢帧。
-- **严格字符等宽**：严格采用等宽字体栈（JetBrains Mono、SF Mono、Cascadia Mono、Menlo、Monaco、Consolas），字符间距设为 0，彻底消除表格、ASCII 字符与 vim 分屏错位。
-- **专业终端配色与排版**：行高固定为 1.42（14px 字号 / 20px 行高），采用深灰黑低对比背景（#12131b）与柔和浅灰文字（#d4d4d8），低饱和 ANSI 语法高亮。
-- **极低输入延迟**：键盘输入通过 xterm 的 `onData` 直接穿透至 Rust 后端通道，完全绕开前端状态分发层。
-- **双向流式通道**：基于 Tauri 2 的 Channel 机制，本地 PTY 与远程 SSH 字节流直灌终端缓冲区。
-
-### 2. 服务器连接与会话管理
-- **本地虚拟终端**：集成 portable-pty，支持一键启动系统原生 Shell（zsh 或 bash）。
-- **全功能 SSH 认证**：支持标准 SSH 密码认证、私钥文件路径认证、私钥明文内容认证、Passphrase 解密以及本地 SSH Agent。
-- **多 Tab 并发会话**：支持同时打开多个本地与远程终端会话，切换标签页无缝保留前后端缓冲区。
-- **分组与检索**：支持对主机进行自定义分组、标签分类与实时快速检索。
-- **SFTP 文件管理抽屉**：支持远程目录树遍历、文件查看、在线编辑与覆写保存。
-- **本地持久化**：使用 SQLite 本地数据库保存服务器列表与系统设置，无第三方云端依赖，数据安全可控。
-
-### 3. AI Agent 智能运维体系
-- **OpenAI 兼容协议**：支持 DeepSeek（deepseek-chat / deepseek-reasoner）、OpenAI（gpt-4o）、Ollama、vLLM 及各类自定义兼容网关。
-- **闭环工具系统**：
-  - `terminal_exec`：在活动主机执行 Shell 命令并实时捕获退出码、stdout 与 stderr。
-  - `file_read`：读取指定远程文件内容。
-  - `file_write`：修改或覆盖远程配置文件。
-  - `file_list`：列出指定目录下的文件与目录详情。
-  - `system_info`：一键获取远程主机的 OS 版本、运行时间与资源状态。
-- **三档安全权限控制**：
-  - 只读模式（read_only）：禁止执行任何修改命令与文件写入。
-  - 需确认模式（ask，默认）：每步关键操作在面板中生成独立的单步审批卡片，由用户决定 [允许执行] 或 [拒绝]。
-  - 全权授权模式（full）：自主执行全量诊断与运维计划。
-- **高危命令拦截器**：内置静态语法模式匹配，针对 `rm -rf /`、`mkfs`、`dd`、`reboot`、`shutdown`、`iptables -F` 等破坏性指令强制弹窗拦截。
+- **硬件加速终端**：基于 xterm.js 与 WebGL 渲染插件，严格字符等宽与专业终端色彩，高频日志输出与全屏 CLI 工具（top/htop/vim）流畅无丢帧。
+- **本地与远程会话管理**：支持一键启动系统原生 Shell（PTY），支持 SSH 密码、私钥（路径或明文）、Passphrase 与本地 Agent 认证，多 Tab 会话秒级切换与状态保留。
+- **AI Agent 智能运维**：兼容 DeepSeek、OpenAI、Ollama 与各类兼容网关，自主规划排障步骤，支持 Shell 命令执行、远程文件读写与系统状态诊断。
+- **三档安全拦截机制**：内置只读（read_only）、需确认（ask，默认）与全权（full）三档策略，对 `rm -rf /`、`mkfs`、`reboot` 等高危破坏性指令进行静态语法匹配与强制弹窗拦截。
+- **SFTP 远程文件管理**：侧边抽屉式文件管理器，支持远程目录树浏览、文件在线查看与编辑覆写保存。
+- **纯本地持久化**：使用本地 SQLite 存储主机配置、标签分组与使用偏好，数据不经过任何第三方云端，私密可控。
 
 ---
 
@@ -43,169 +19,169 @@
 
 ```text
 +-------------------------------------------------------------+
-|                        AI Terminal                          |
+|                        Tini Terminal                        |
 |                                                             |
-| 前端展现层 (React 19 + TypeScript + Vite + Tailwind CSS v4) |
-| - 服务器管理侧栏 (ServerSidebar)                            |
-| - 高品质终端渲染 (XTerminal + xterm.js + WebGL)              |
-| - AI 运维智能体面板 (AgentPanel)                            |
-| - SFTP 文件管理抽屉 (FileManagerDrawer)                     |
-| - 状态持久化 (Zustand)                                      |
+| 前端交互层 (React 19 + TypeScript + Tailwind CSS v4 + Vite) |
+| - 服务器管理与分组导航 (ServerSidebar)                      |
+| - WebGL 硬件加速终端 (XTerminal + xterm.js)                 |
+| - AI 运维智能体面板 (AgentPanel + ToolRunner)               |
+| - SFTP 远程文件管理抽屉 (FileManagerDrawer)                 |
+| - 全局响应式状态管理 (Zustand)                              |
 |                                                             |
-| 桌面通信层 (Tauri 2 IPC + Channel Streaming)                |
+| 桌面通信层 (Tauri 2 IPC Command & Channel Streaming)        |
 |                                                             |
-| 核心后端层 (Rust 1.98.1 + Tokio)                            |
-| - 本地 PTY 驱动器 (portable-pty)                            |
-| - 异步 SSH 引擎 (ssh2)                                      |
-| - SFTP 传输管理 (sftp)                                      |
-| - 本地持久存储 (rusqlite / SQLite)                          |
-| - 危险命令检测拦截器 (safety)                               |
-| - AI API 连通适配器 (agent)                                 |
+| 核心后端层 (Rust 2021 + Tokio)                              |
+| - 本地 PTY 会话驱动器 (portable-pty)                        |
+| - 异步 SSH2 / SFTP 传输核心 (ssh2)                          |
+| - 本地持久化存储引擎 (rusqlite / SQLite)                    |
+| - 高危指令语法分析与拦截器 (safety / regex)                 |
+| - AI API 协议适配与连通性检测 (agent / reqwest)              |
 +-------------------------------------------------------------+
 ```
 
 ---
 
-## 环境准备
+## 下载与安装
 
-编译与运行本项目前，请确保操作系统已安装以下环境：
+### 预编译安装包
 
-1. **Node.js**：版本 >= 18（推荐 v20 或 v24）
-2. **包管理器**：npm（推荐）、pnpm 或 yarn
-3. **Rust 工具链**：版本 >= 1.77.2（推荐使用 rustup 安装 stable 工具链）
-4. **系统原生依赖**：
-   - **macOS**：需安装 Xcode Command Line Tools（运行 `xcode-select --install`）
-   - **Linux**：需安装 webkit2gtk、libssl-dev、libgtk-3-dev 等 Tauri 编译依赖
-   - **Windows**：需安装 Microsoft Visual Studio C++ 生成工具与 WebView2
+前往项目的 [Releases 页面](https://github.com/tangyixiang/tini-terminal/releases) 下载对应操作系统的安装包：
+
+- **macOS**：`.dmg`（支持 Apple Silicon M 系列与 Intel 架构）
+- **Windows**：`.exe`（基于 NSIS 架构打包）
+- **Linux**：`.deb`（支持 Debian / Ubuntu 系发行版）
+
+### macOS 用户安装注意
+
+因开源个人构建未加入商业付费开发者证书签名，若在 macOS 打开应用时提示 **“文件已损坏，您应该将它移到废纸篓”**，此为系统 Gatekeeper 安全拦截机制所致。
+
+请在终端中执行以下命令清除下载隔离属性即可正常使用：
+
+```bash
+xattr -cr /Applications/tini-terminal.app
+```
 
 ---
 
-## 编译与运行指南
+## 开发与编译
+
+### 前置环境
+
+- [Node.js](https://nodejs.org/)（版本 >= 18.0，推荐 v20+）
+- [Rust 工具链](https://rustup.rs/)（版本 >= 1.77.2，推荐 stable 分支）
+- [Cargo](https://doc.rust-lang.org/cargo/) 包管理器
+- 系统依赖（Linux 环境需安装 `libwebkit2gtk-4.1-dev`、`libssl-dev`、`libgtk-3-dev` 等原生库；macOS 需安装 Command Line Tools）
 
 ### 1. 安装项目依赖
-
-在项目根目录下执行以下命令安装前端依赖包：
 
 ```bash
 npm install
 ```
 
-### 2. 本地开发调试
+### 2. 桌面端本地开发调试
 
-#### 启动完整的 Tauri 桌面端开发环境（推荐）
-
-该命令将同时启动 Vite 前端服务并唤起原生桌面窗口：
+启动桌面端开发模式（自动启动 Vite 服务并唤起 Tauri 原生桌面窗口）：
 
 ```bash
 npm run tauri dev
 ```
 
-#### 仅启动前端浏览器预览
-
-仅调试页面样式与布局时使用：
+如仅需启动前端浏览器页面调试：
 
 ```bash
 npm run dev
 ```
 
-启动后可在浏览器中访问 `http://localhost:5173` 进行界面预览。
+### 3. 构建发布安装包
 
-### 3. 运行自动化测试
-
-#### 运行 Rust 后端单元测试
-
-测试覆盖高危指令拦截规则与 SQLite 数据持久化逻辑：
-
-```bash
-cd src-tauri
-cargo test
-```
-
-#### 运行前端构建检查
-
-验证 TypeScript 类型定义与生产包打包情况：
-
-```bash
-npm run build
-```
-
-### 4. 发布与打包构建
-
-执行以下命令生成针对当前操作系统的生产环境桌面安装包：
+构建当前平台专属的最终发布包（产物位于 `src-tauri/target/release/bundle/`）：
 
 ```bash
 npm run tauri build
 ```
 
-构建产物将输出至：
-- **macOS**：`src-tauri/target/release/bundle/dmg/` 或 `src-tauri/target/release/bundle/macos/`
-- **Linux**：`src-tauri/target/release/bundle/deb/` 或 `src-tauri/target/release/bundle/appimage/`
-- **Windows**：`src-tauri/target/release/bundle/nsis/` 或 `src-tauri/target/release/bundle/msi/`
+如需在 macOS 上打包通用双架构（Universal Binary）安装包：
 
----
+```bash
+npm run tauri build -- --target universal-apple-darwin
+```
 
-## 项目目录结构
+### 4. 代码规范与测试
 
-```text
-ai-terminal/
-├── src/                            # 前端源码
-│   ├── components/
-│   │   ├── agent/                  # AI 运维智能体组件
-│   │   │   └── AgentPanel.tsx
-│   │   ├── layout/                 # 布局组件（标题栏、底部状态栏）
-│   │   │   ├── StatusBar.tsx
-│   │   │   └── TitleBar.tsx
-│   │   ├── modals/                 # 业务配置弹窗
-│   │   │   ├── ServerModal.tsx     # 主机配置弹窗
-│   │   │   └── SettingsModal.tsx   # AI 供应商与系统设置弹窗
-│   │   ├── servers/                # 服务器侧边栏组件
-│   │   │   └── ServerSidebar.tsx
-│   │   ├── sftp/                   # SFTP 远程文件管理抽屉
-│   │   │   └── FileManagerDrawer.tsx
-│   │   └── terminal/               # xterm.js WebGL 终端核心组件
-│   │       └── XTerminal.tsx
-│   ├── lib/
-│   │   └── agent/                  # AI 工具定义与调用调度器
-│   │       ├── runner.ts
-│   │       └── tools.ts
-│   ├── stores/                     # Zustand 全局状态管理
-│   │   ├── useAgentStore.ts
-│   │   ├── useServerStore.ts
-│   │   ├── useSettingsStore.ts
-│   │   └── useTerminalStore.ts
-│   ├── types/                      # TypeScript 类型定义
-│   │   ├── index.ts
-│   │   └── tauri.d.ts
-│   ├── App.tsx                     # 根组件
-│   ├── index.css                   # 全局样式与终端等宽字体规则
-│   └── main.tsx                    # 前端入口
-├── src-tauri/                      # Tauri 2 后端源码 (Rust)
-│   ├── capabilities/               # 应用权限配置
-│   │   └── default.json
-│   ├── src/
-│   │   ├── agent.rs                # AI 服务与连通性测试模块
-│   │   ├── lib.rs                  # Tauri 命令注册中心
-│   │   ├── main.rs                 # 桌面应用入口
-│   │   ├── pty.rs                  # 本地虚拟 PTY 驱动器
-│   │   ├── safety.rs               # 危险命令拦截器与测试用例
-│   │   ├── sftp.rs                 # SFTP 远程文件系统交互
-│   │   ├── ssh.rs                  # SSH2 客户端、交互会话与命令同步执行
-│   │   └── storage.rs              # SQLite 数据库持久化与测试用例
-│   ├── Cargo.toml                  # Rust 依赖声明
-│   └── tauri.conf.json             # Tauri 桌面窗口与打包配置
-├── prototype.html                  # 1:1 高保真前端原型页面
-├── package.json                    # 前端依赖与脚本声明
-├── tsconfig.json                   # TypeScript 配置
-├── vite.config.ts                  # Vite 与 Tailwind 插件配置
-└── 需求.md                         # 初始产品需求与架构设计方案
+```bash
+# 运行 Rust 后端单元测试（覆盖高危指令拦截与 SQLite 持久化）
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# 运行前端代码规范检查
+npm run lint
+
+# 验证 TypeScript 类型与前端打包
+npm run build
 ```
 
 ---
 
-## 使用说明
+## 快捷键与操作说明
 
-1. **添加主机**：点击顶部导航栏的 [添加主机] 按钮，录入主机名称、IP、端口、用户名，选择私钥文件认证或密码认证。
-2. **连接终端**：双击左侧主机列表项即可打开远程 SSH 终端，或点击常用分组中的 [本地 Shell] 开启本地终端。
-3. **配置 AI 智能体**：点击右上角设置齿轮图标，选择提供商（如 DeepSeek），填入 API Base URL 与 API Key 并保存。
-4. **智能排障与运维**：在右侧 AI 面板中输入运维任务（例如：“检查 80 端口占用情况与防火墙规则”），Agent 将自主规划步骤、调用工具并展示执行结果。
-5. **权限保护**：在需确认模式下，涉及服务器变更的命令均需用户点击 [允许执行] 确认后方可落地。
+| 快捷键 / 操作 | 功能描述 |
+| :--- | :--- |
+| `Ctrl + Shift + C` / `Cmd + Shift + C` | 复制终端内当前选中文本 |
+| `Ctrl + Shift + V` / `Cmd + Shift + V` | 粘贴剪贴板内容到当前活动终端 |
+| `Enter`（AI 输入框） | 发送运维提示词并触发 Agent 执行 |
+| `Shift + Enter`（AI 输入框） | 在 AI 提示词输入框中换行 |
+| `双击主机列表项` | 快速连接并打开目标主机终端会话 |
+| `二级标签栏操作项` | 清屏、一键复制终端完整输出或重试连接 |
+| `侧边栏 SFTP 按钮` | 呼出当前主机远程文件管理抽屉 |
+| `拖拽分栏分隔线` | 自由调整服务器列表栏与 AI 面板宽度 |
+
+---
+
+## 目录结构
+
+```text
+tini-terminal/
+├── .github/
+│   └── workflows/
+│       └── release.yml         # 多平台自动化构建打包 GitHub Action 工作流
+├── src/                        # 前端工程源码 (React 19 + TypeScript + Tailwind CSS v4)
+│   ├── components/             # 界面核心组件
+│   │   ├── agent/              # AI 智能体面板、微型控制台与输出渲染
+│   │   ├── layout/             # 窗口自定义标题栏与底部状态栏
+│   │   ├── modals/             # 主机配置弹窗与系统设置弹窗
+│   │   ├── servers/            # 服务器侧栏、分组与检索视图
+│   │   ├── sftp/               # 远程文件管理抽屉与文本编辑器
+│   │   ├── terminal/           # WebGL 终端渲染、会话驱动与输入流管理
+│   │   └── workspace/          # 运维工作区与上下文面板
+│   ├── lib/                    # AI 工具执行调度器与工具集封装
+│   ├── stores/                 # Zustand 状态管理 (主机、终端、配置、智能体)
+│   ├── types/                  # 全局 TypeScript 类型与 Tauri API 声明
+│   ├── App.tsx                 # 前端根组件
+│   ├── index.css               # 全局样式与终端等宽字体规则
+│   └── main.tsx                # 前端入口文件
+├── src-tauri/                  # Tauri 2 原生桌面端核心 (Rust 2021)
+│   ├── capabilities/           # 窗口与原生功能权限配置
+│   ├── src/                    # Rust 后端源码
+│   │   ├── agent.rs            # AI 服务适配与网络连通性
+│   │   ├── lib.rs              # Tauri IPC 命令注册中心
+│   │   ├── main.rs             # 桌面程序入口
+│   │   ├── pty.rs              # 本地虚拟 PTY 驱动器
+│   │   ├── safety.rs           # 危险命令静态拦截器
+│   │   ├── sftp.rs             # SFTP 远程文件传输与读写
+│   │   ├── ssh.rs              # 异步 SSH2 客户端会话驱动
+│   │   ├── storage.rs          # 本地 SQLite 数据持久化
+│   │   ├── session/            # 会话生命周期与工作目录追踪
+│   │   ├── task/               # 异步执行任务管理器
+│   │   └── workspace/          # 运维工作区与上下文数据模型
+│   ├── Cargo.toml              # 后端 Rust 依赖清单
+│   └── tauri.conf.json         # 桌面窗口、资源与多平台打包配置
+├── dist/                       # 前端静态资源构建输出目录
+├── index.html                  # HTML 宿主入口
+├── vite.config.ts              # Vite 与样式插件配置
+└── package.json                # 前端依赖与构建脚本配置
+```
+
+---
+
+## 开源协议
+
+本项目基于 MIT 协议 开源。

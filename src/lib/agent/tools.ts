@@ -90,6 +90,20 @@ export const AGENT_TOOLS = [
   },
 ];
 
+export function isDiagnosticCommand(cmd: string): boolean {
+  const trimmed = cmd.trim().toLowerCase();
+  const diagnosticPatterns = [
+    /^(grep|egrep|fgrep)\b/,
+    /^test\b/,
+    /^\[\s/,
+    /^(pidof|pgrep)\b/,
+    /^diff\b/,
+    /^systemctl\s+(is-active|is-enabled|is-failed)\b/,
+    /^(which|type|command -v)\b/,
+  ];
+  return diagnosticPatterns.some((p) => p.test(trimmed));
+}
+
 export async function executeToolCall(
   sessionId: string,
   toolName: string,
@@ -145,9 +159,11 @@ export async function executeToolCall(
         if (res.exit_code === 0) {
           return { stdout: res.stdout || '(命令执行成功，无额外输出)' };
         } else {
+          // 探测性命令（如 grep、test、[ ]、pidof、diff 等）非零退出码仅代表匹配结果或分支判断，不代表运维指令执行失败
+          const isDiag = isDiagnosticCommand(cmd);
           return {
-            stdout: `退出码 ${res.exit_code}\n${res.stdout ? `标准输出:\n${res.stdout}\n` : ''}${res.stderr ? `错误输出:\n${res.stderr}` : ''}`,
-            isError: true,
+            stdout: `退出码 ${res.exit_code}${isDiag ? ' (探测判断结果)' : ''}\n${res.stdout ? `标准输出:\n${res.stdout}\n` : ''}${res.stderr ? `错误输出:\n${res.stderr}` : ''}`,
+            isError: !isDiag,
           };
         }
       }

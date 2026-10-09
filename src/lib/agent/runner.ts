@@ -221,7 +221,10 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
    - 严禁输出任何 Emoji 表情符号。
 5. 必须输出最终结论报告（结论闭环）:
    - 在所有工具调用执行完毕后，必须在最终回复文本中对执行结果给出清晰精炼的结论与分析报告。
-   - 明确指出服务状态、健康检查结果或配置变更情况。严禁仅调用工具而不输出任何文字结论，严禁静默空回复！`;
+   - 明确指出服务状态、健康检查结果或配置变更情况。严禁仅调用工具而不输出任何文字结论，严禁静默空回复！
+6. 客观判定执行状态与结论，严禁将正常探测误判为未完成:
+   - Linux 环境中，诊断探测类命令（如 grep、test、[ ]、pidof、diff、systemctl is-active 等）返回非零退出码通常代表条件判断结果（如未检索到报错、服务未处于活动状态等），绝不代表任务失败。
+   - 必须结合用户下达运维任务的真实目标进行客观综合评估。只要运维目标已经达成或排查步骤已全部得出明确结论，必须明确向用户汇报已完成，严禁将正常的探测结果机械式地总结为"操作未完成"或"失败"。`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -445,11 +448,12 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 如果已执行过工具但正文仍然为空，且未中止，显式请求模型输出结论
-        if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
+        // 如果已执行过工具且本轮未输出明确结论正文，显式请求模型输出最终结论与闭环报告
+        if (toolCallItems.length > 0 && !loopContent.trim() && !signal.aborted) {
           conversation.push({
             role: 'user',
-            content: '所有运维步骤已执行完毕，请结合上述实际输出，向用户给出清晰精炼的最终执行结论与分析报告。',
+            content:
+              '所有运维步骤已执行完毕，请结合上述实际输出，向用户给出清晰精炼的最终执行结论与分析报告。如果探测判断类命令（如 grep/test/pidof）返回非零退出码仅代表判断分支，请据实客观报告真实达成情况，严禁误报未完成。',
           });
           let summaryBuffer = '';
           loopThinking = '';
@@ -478,7 +482,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           }
           if (loopContent) {
             accumulatedContent = accumulatedContent
-              ? `${accumulatedContent}\n\n${loopContent}`
+              ? `${accumulatedContent}\n\n### 执行结论\n${loopContent}`
               : loopContent;
           }
         }
