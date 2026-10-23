@@ -227,6 +227,11 @@ ${hostDescriptions}
    - 严禁输出任何 Emoji 表情符号。
 4. 必须输出最终结论报告（结论闭环）:
    - 在所有多机工具调用执行完毕后，必须在最终回复文本中向用户输出多机协同的最终结论与分析报告。
+   - 格式建议：
+### 最终执行结论
+- 总体达成情况: [已完成 / 异常]
+- 节点状态与验证: [提炼各主机执行结果、服务状态或对比差异]
+- 重点变更与同步: [若有跨机配置同步、脚本下发请简要列出]
    - 明确提炼各主机的执行状态、配置对比差异或服务状态。严禁仅调用工具而不输出任何总结结论，严禁静默空答！
 5. 整体目标与最终验证驱动，严禁误报未完成:
    - 多机协同运维以最终达成的集群业务目标与各节点最终验证状态为唯一评判准绳。
@@ -455,11 +460,12 @@ ${hostDescriptions}
 
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 当所有跨机工具调用执行完毕后，只要尚未输出结构化的多机执行结论，显式请求模型输出闭环分析报告
-        const hasStructuredSummary =
-          accumulatedContent.includes('### 最终执行结论') ||
-          accumulatedContent.includes('### 执行结论');
-        if (toolCallItems.length > 0 && !hasStructuredSummary && !signal.aborted) {
+        // 若已执行过工具且模型在当前轮次中未输出文字结论，补齐上下文并显式请求模型输出最终结论报告
+        if (toolCallItems.length > 0 && !accumulatedContent.trim() && !signal.aborted) {
+          conversation.push({
+            role: 'assistant',
+            content: '已执行完成上述跨机运维操作。',
+          });
           conversation.push({
             role: 'user',
             content: `所有跨机运维步骤与工具调用已执行完毕。请结合上述各主机真实执行日志与最终验证结果，向用户输出清晰精炼的多机执行结论与分析报告：
@@ -497,12 +503,7 @@ ${hostDescriptions}
             handleLines([summaryBuffer.trim()]);
           }
           if (loopContent.trim()) {
-            const conclusionText = loopContent.trim().includes('### 最终执行结论')
-              ? loopContent.trim()
-              : `### 最终执行结论\n${loopContent.trim()}`;
-            accumulatedContent = accumulatedContent.trim()
-              ? `${accumulatedContent.trim()}\n\n${conclusionText}`
-              : conclusionText;
+            accumulatedContent = loopContent.trim();
           }
         }
         break;

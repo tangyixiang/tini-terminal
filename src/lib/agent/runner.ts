@@ -200,6 +200,11 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
    - 严禁输出任何 Emoji 表情符号。
 5. 必须输出最终结论报告（结论闭环）:
    - 在所有工具调用执行完毕后，必须在最终回复文本中对执行结果给出清晰精炼的结论与分析报告。
+   - 格式建议：
+### 执行结论
+- 目标达成情况: [已完成 / 异常]
+- 关键状态与验证: [提炼最终检查结果、服务状态或端口情况]
+- 重点变更说明: [若有配置修改或脚本部署请简要列出]
    - 明确指出服务状态、健康检查结果或配置变更情况。严禁仅调用工具而不输出任何文字结论，严禁静默空回复！
 6. 整体目标与最终验证驱动，严禁误报未完成:
    - 运维任务以最终达成的业务目标与最终验证状态为唯一评判准绳。
@@ -428,11 +433,12 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 当所有工具调用执行完毕后，只要尚未输出结构化的执行结论报告，显式请求模型输出闭环分析报告
-        const hasStructuredSummary =
-          accumulatedContent.includes('### 执行结论') ||
-          accumulatedContent.includes('### 最终执行结论');
-        if (toolCallItems.length > 0 && !hasStructuredSummary && !signal.aborted) {
+        // 若已执行过工具且模型在当前轮次中未输出文字结论，补齐上下文并显式请求模型输出最终结论报告
+        if (toolCallItems.length > 0 && !accumulatedContent.trim() && !signal.aborted) {
+          conversation.push({
+            role: 'assistant',
+            content: '已执行完成上述运维操作。',
+          });
           conversation.push({
             role: 'user',
             content: `所有运维步骤与工具调用已执行完毕。请结合上述真实执行日志与最终验证结果，向用户输出清晰精炼的最终执行结论与分析报告：
@@ -470,12 +476,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
             handleLines([summaryBuffer.trim()]);
           }
           if (loopContent.trim()) {
-            const conclusionText = loopContent.trim().includes('### 执行结论')
-              ? loopContent.trim()
-              : `### 执行结论\n${loopContent.trim()}`;
-            accumulatedContent = accumulatedContent.trim()
-              ? `${accumulatedContent.trim()}\n\n${conclusionText}`
-              : conclusionText;
+            accumulatedContent = loopContent.trim();
           }
         }
         break;
