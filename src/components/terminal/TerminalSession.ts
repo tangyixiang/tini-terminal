@@ -48,16 +48,10 @@ export class TerminalSession {
     this.lastRows = rows;
 
     if (!window.__TAURI_INTERNALS__) {
-      this.onOutput('\x1b[32m[本地预览模式]\x1b[0m 正在模拟终端连接至 ' + this.tab.title + '\r\n');
-      this.onOutput('ANSI 颜色支持测试:\r\n');
-      this.onOutput(
-        '  \x1b[31m[错误 Red]\x1b[0m  \x1b[32m[成功 Green]\x1b[0m  \x1b[33m[警告 Yellow]\x1b[0m  \x1b[34m[路径 Blue]\x1b[0m  \x1b[35m[标量 Magenta]\x1b[0m  \x1b[36m[信息 Cyan]\x1b[0m\r\n'
-      );
-      this.onOutput('\x1b[32mroot@' + (this.tab.server?.name || 'local') + '\x1b[0m:\x1b[34m~\x1b[0m# ');
-
-      this.isConnected = true;
       this.isConnecting = false;
-      this.onConnectedChange?.(true);
+      this.isConnected = false;
+      this.onOutput('\x1b[31m[环境异常]\x1b[0m 未检测到桌面端原生运行时，无法创建 PTY/SSH 终端通道。\r\n');
+      this.onConnectedChange?.(false);
       return;
     }
 
@@ -193,15 +187,6 @@ export class TerminalSession {
     }
 
     if (!window.__TAURI_INTERNALS__) {
-      for (const char of chunk) {
-        if (char === '\r') {
-          this.onOutput('\r\n\x1b[32mroot@' + (this.tab.server?.name || 'local') + '\x1b[0m:\x1b[34m~\x1b[0m# ');
-        } else if (char === '\u007f') {
-          this.onOutput('\b \b');
-        } else {
-          this.onOutput(char);
-        }
-      }
       return;
     }
 

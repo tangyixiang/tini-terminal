@@ -1,6 +1,9 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import type { SafetyCheckResult, SftpListResult } from '../../types';
+import { isDiagnosticCommand } from './commandUtils';
+
+export { isDiagnosticCommand };
 
 export const AGENT_TOOLS = [
   {
@@ -90,19 +93,7 @@ export const AGENT_TOOLS = [
   },
 ];
 
-export function isDiagnosticCommand(cmd: string): boolean {
-  const trimmed = cmd.trim().toLowerCase();
-  const diagnosticPatterns = [
-    /^(grep|egrep|fgrep)\b/,
-    /^test\b/,
-    /^\[\s/,
-    /^(pidof|pgrep)\b/,
-    /^diff\b/,
-    /^systemctl\s+(is-active|is-enabled|is-failed)\b/,
-    /^(which|type|command -v)\b/,
-  ];
-  return diagnosticPatterns.some((p) => p.test(trimmed));
-}
+
 
 export async function executeToolCall(
   sessionId: string,
@@ -111,12 +102,9 @@ export async function executeToolCall(
   onStream?: (chunk: string) => void
 ): Promise<{ stdout: string; isError?: boolean }> {
   if (!window.__TAURI_INTERNALS__) {
-    // 浏览器环境回退
-    if (onStream) {
-      onStream(`[本地模拟] 执行工具 ${toolName}...\n`);
-    }
     return {
-      stdout: `[开发环境测试] 执行工具 ${toolName}，参数: ${JSON.stringify(args)}`,
+      stdout: '未检测到原生运行时环境，无法执行终端与文件工具',
+      isError: true,
     };
   }
 

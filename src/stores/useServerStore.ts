@@ -20,31 +20,12 @@ export const useServerStore = create<ServerState>((set, get) => ({
   fetchServers: async () => {
     set({ loading: true });
     try {
-      if (window.__TAURI_INTERNALS__) {
-        const list = await invoke<ServerRecord[]>('list_servers');
-        set({ servers: list, loading: false });
-      } else {
-        // 浏览器开发预览回退
-        const local = localStorage.getItem('ai_terminal_servers');
-        if (local) {
-          set({ servers: JSON.parse(local), loading: false });
-        } else {
-          const defaultList: ServerRecord[] = [
-            {
-              id: 'local-1',
-              name: 'Local Shell',
-              host: 'localhost',
-              port: 22,
-              username: 'local',
-              auth_type: 'password',
-              group_name: '本地终端',
-              tags: 'local,shell',
-              created_at: Date.now(),
-            },
-          ];
-          set({ servers: defaultList, loading: false });
-        }
+      if (!window.__TAURI_INTERNALS__) {
+        set({ servers: [], loading: false });
+        return;
       }
+      const list = await invoke<ServerRecord[]>('list_servers');
+      set({ servers: list, loading: false });
     } catch (e) {
       console.error('获取主机列表失败:', e);
       set({ loading: false });

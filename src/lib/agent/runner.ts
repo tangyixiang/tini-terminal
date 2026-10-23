@@ -3,6 +3,7 @@ import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { AGENT_TOOLS, checkSafety, executeToolCall } from './tools';
+import { isReadOnlyCommand } from './commandUtils';
 import type { ToolCallItem } from '../../types';
 
 const abortControllers: Record<string, AbortController> = {};
@@ -145,29 +146,7 @@ export function abortAgentTask(targetTabId?: string): void {
   });
 }
 
-function isReadOnlyCommand(cmd: string): boolean {
-  const trimmed = cmd.trim();
-  if (!trimmed) return true;
-  // 严禁包含写入重定向或写管道
-  if (/>|>>|\|\s*(tee|dd)\b/i.test(trimmed)) return false;
-  // 匹配状态修改与变更命令
-  const modifyingKeywords = [
-    'rm', 'mv', 'cp', 'chmod', 'chown', 'chgrp', 'mkdir', 'touch', 'truncate',
-    'sed -i', 'useradd', 'usermod', 'userdel', 'groupadd', 'groupdel', 'passwd',
-    'apt', 'apt-get', 'yum', 'dnf', 'pacman', 'apk', 'systemctl start',
-    'systemctl stop', 'systemctl restart', 'systemctl enable', 'systemctl disable',
-    'service', 'kill', 'pkill', 'killall', 'reboot', 'shutdown', 'poweroff', 'mkfs', 'fdisk', 'dd',
-    'git commit', 'git push', 'git checkout', 'git reset', 'git clean',
-  ];
-  const lower = trimmed.toLowerCase();
-  for (const kw of modifyingKeywords) {
-    const regex = new RegExp(`(^|[;&|\\s])${kw}(\\s|[;&|]|$)`, 'i');
-    if (regex.test(lower)) {
-      return false;
-    }
-  }
-  return true;
-}
+
 
 export async function runAgentTask(userPrompt: string, targetTabId?: string): Promise<void> {
   const terminalStore = useTerminalStore.getState();
@@ -222,9 +201,10 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 5. 必须输出最终结论报告（结论闭环）:
    - 在所有工具调用执行完毕后，必须在最终回复文本中对执行结果给出清晰精炼的结论与分析报告。
    - 明确指出服务状态、健康检查结果或配置变更情况。严禁仅调用工具而不输出任何文字结论，严禁静默空回复！
-6. 客观判定执行状态与结论，严禁将正常探测误判为未完成:
-   - Linux 环境中，诊断探测类命令（如 grep、test、[ ]、pidof、diff、systemctl is-active 等）返回非零退出码通常代表条件判断结果（如未检索到报错、服务未处于活动状态等），绝不代表任务失败。
-   - 必须结合用户下达运维任务的真实目标进行客观综合评估。只要运维目标已经达成或排查步骤已全部得出明确结论，必须明确向用户汇报已完成，严禁将正常的探测结果机械式地总结为"操作未完成"或"失败"。`;
+6. 整体目标与最终验证驱动，严禁误报未完成:
+   - 运维任务以最终达成的业务目标与最终验证状态为唯一评判准绳。
+   - 凡是在执行过程中作为前置探测、环境排查、分支条件判断的命令（如 grep、test、[ ]、pidof、which、diff、systemctl is-active 等返回非零退出码），绝不属于操作失败。
+   - 凡是前期报错或状态未就绪，但已被后续步骤成功修复、重新启动、正确配置或成功创建的，均属任务圆满完成，严禁将中间排查或自愈过程误判为"任务未完成"或"操作失败"。`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -448,12 +428,21 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 如果已执行过工具且本轮未输出明确结论正文，显式请求模型输出最终结论与闭环报告
-        if (toolCallItems.length > 0 && !loopContent.trim() && !signal.aborted) {
+        // 当所有工具调用执行完毕后，只要尚未输出结构化的执行结论报告，显式请求模型输出闭环分析报告
+        const hasStructuredSummary =
+          accumulatedContent.includes('### 执行结论') ||
+          accumulatedContent.includes('### 最终执行结论');
+        if (toolCallItems.length > 0 && !hasStructuredSummary && !signal.aborted) {
           conversation.push({
             role: 'user',
-            content:
-              '所有运维步骤已执行完毕，请结合上述实际输出，向用户给出清晰精炼的最终执行结论与分析报告。如果探测判断类命令（如 grep/test/pidof）返回非零退出码仅代表判断分支，请据实客观报告真实达成情况，严禁误报未完成。',
+            content: `所有运维步骤与工具调用已执行完毕。请结合上述真实执行日志与最终验证结果，向用户输出清晰精炼的最终执行结论与分析报告：
+1. 必须以整体运维目标是否达成及最终验证结果为唯一评判标准。
+2. 前期用于探测、分支判断的非零退出码，或已被后续步骤成功修复/启动的中间状态，一律不得判定为操作未完成。只要最终服务或目标状态正常，必须明确汇报已圆满完成。
+3. 请按以下格式输出精炼报告：
+### 执行结论
+- 目标达成情况: [已完成 / 异常]
+- 关键状态与验证: [提炼最终检查结果、服务状态或端口情况]
+- 重点变更说明: [若有配置修改或脚本部署请简要列出]`,
           });
           let summaryBuffer = '';
           loopThinking = '';
@@ -480,10 +469,13 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           if (summaryBuffer.trim()) {
             handleLines([summaryBuffer.trim()]);
           }
-          if (loopContent) {
-            accumulatedContent = accumulatedContent
-              ? `${accumulatedContent}\n\n### 执行结论\n${loopContent}`
-              : loopContent;
+          if (loopContent.trim()) {
+            const conclusionText = loopContent.trim().includes('### 执行结论')
+              ? loopContent.trim()
+              : `### 执行结论\n${loopContent.trim()}`;
+            accumulatedContent = accumulatedContent.trim()
+              ? `${accumulatedContent.trim()}\n\n${conclusionText}`
+              : conclusionText;
           }
         }
         break;
@@ -627,28 +619,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
       }
     }
 
-    // 最终兜底：确保界面绝不出现无结论的情况
-    if (!accumulatedContent.trim() && toolCallItems.length > 0 && !signal.aborted) {
-      const hasFailed = toolCallItems.some((t) => t.status === 'failed' || t.status === 'rejected');
-      const lines: string[] = [];
-      lines.push(hasFailed ? '部分操作未正常完成，请查看上方详细输出：' : '所有运维操作已执行完毕，状态正常：');
-      for (const tc of toolCallItems) {
-        if (tc.name === 'terminal_exec') {
-          lines.push(`- 执行指令 \`${tc.args.command || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
-        } else if (tc.name === 'file_write') {
-          lines.push(`- 写入文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
-        } else if (tc.name === 'file_read') {
-          lines.push(`- 读取文件 \`${tc.args.path || ''}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
-        } else {
-          lines.push(`- 工具 \`${tc.name}\`：${tc.status === 'success' ? '完成' : '未成功'}`);
-        }
-      }
-      accumulatedContent = lines.join('\n');
-      agentStore.updateLastMessage(tabId, (m) => ({
-        ...m,
-        content: accumulatedContent,
-      }));
-    }
+
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {
       agentStore.updateLastMessage(tabId, (m) => {

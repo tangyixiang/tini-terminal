@@ -82,27 +82,19 @@ export const FileManagerDrawer: React.FC = () => {
     setLoading(true);
     setStatusMsg('');
     try {
-      if (window.__TAURI_INTERNALS__) {
-        const res = await invoke<SftpListResult>('sftp_list_dir', {
-          sessionId: tab.sessionId,
-          remotePath: dirPath,
-        });
-        setFiles(res.files || []);
-        setCurrentPath(res.current_dir);
-        setPathInput(res.current_dir);
-        tabPathMapRef.current[tab.sessionId] = res.current_dir;
-      } else {
-        // 开发预览环境模拟
-        const mockTarget = dirPath || '/root';
-        setFiles([
-          { name: 'nginx.conf', path: `${mockTarget}/nginx.conf`, size: 1420, is_dir: false, permissions: 420, mtime: Date.now() },
-          { name: 'conf.d', path: `${mockTarget}/conf.d`, size: 4096, is_dir: true, permissions: 493, mtime: Date.now() },
-          { name: 'access.log', path: `${mockTarget}/access.log`, size: 84920, is_dir: false, permissions: 420, mtime: Date.now() },
-        ]);
-        setCurrentPath(mockTarget);
-        setPathInput(mockTarget);
-        tabPathMapRef.current[tab.sessionId] = mockTarget;
+      if (!window.__TAURI_INTERNALS__) {
+        setFiles([]);
+        setStatusMsg('未检测到原生运行时环境，无法访问远程 SFTP 文件系统');
+        return;
       }
+      const res = await invoke<SftpListResult>('sftp_list_dir', {
+        sessionId: tab.sessionId,
+        remotePath: dirPath,
+      });
+      setFiles(res.files || []);
+      setCurrentPath(res.current_dir);
+      setPathInput(res.current_dir);
+      tabPathMapRef.current[tab.sessionId] = res.current_dir;
     } catch (e: any) {
       setStatusMsg(`读取目录失败: ${e?.message || e}`);
     } finally {
@@ -317,16 +309,16 @@ export const FileManagerDrawer: React.FC = () => {
     if (!activeTab || !selectedFile) return;
     setSaving(true);
     try {
-      if (window.__TAURI_INTERNALS__) {
-        await invoke('sftp_write_file', {
-          sessionId: activeTab.sessionId,
-          remotePath: selectedFile.path,
-          content: fileContent,
-        });
-        setStatusMsg('文件已成功保存');
-      } else {
-        setStatusMsg('模拟保存成功');
+      if (!window.__TAURI_INTERNALS__) {
+        setStatusMsg('未检测到原生运行时环境，无法保存远程文件');
+        return;
       }
+      await invoke('sftp_write_file', {
+        sessionId: activeTab.sessionId,
+        remotePath: selectedFile.path,
+        content: fileContent,
+      });
+      setStatusMsg('文件已成功保存');
     } catch (e: any) {
       setStatusMsg(`保存文件失败: ${e?.message || e}`);
     } finally {

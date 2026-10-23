@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SafetyCheckResult } from '../../types';
+import { isDiagnosticCommand } from './commandUtils';
+
+export { isDiagnosticCommand };
 
 export const WORKSPACE_AGENT_TOOLS = [
   {
@@ -119,31 +122,17 @@ export const WORKSPACE_AGENT_TOOLS = [
   },
 ];
 
-export function isDiagnosticCommand(cmd: string): boolean {
-  const trimmed = cmd.trim().toLowerCase();
-  const diagnosticPatterns = [
-    /^(grep|egrep|fgrep)\b/,
-    /^test\b/,
-    /^\[\s/,
-    /^(pidof|pgrep)\b/,
-    /^diff\b/,
-    /^systemctl\s+(is-active|is-enabled|is-failed)\b/,
-    /^(which|type|command -v)\b/,
-  ];
-  return diagnosticPatterns.some((p) => p.test(trimmed));
-}
+
 
 export async function executeWorkspaceToolCall(
   toolName: string,
   args: Record<string, any>,
-  onStream?: (chunk: string) => void
+  _onStream?: (chunk: string) => void
 ): Promise<{ stdout: string; isError?: boolean }> {
   if (!window.__TAURI_INTERNALS__) {
-    if (onStream) {
-      onStream(`[测试环境] 执行多机工具 ${toolName}...\n`);
-    }
     return {
-      stdout: `[开发环境测试] 执行多机工具 ${toolName}，参数: ${JSON.stringify(args)}`,
+      stdout: '未检测到原生运行时环境，无法执行跨机协同工具',
+      isError: true,
     };
   }
 

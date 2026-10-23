@@ -44,7 +44,7 @@ export const ServerModal: React.FC = () => {
     setPort(22);
     setUsername('root');
     setAuthType('key');
-    setCredential('~/.ssh/id_ed25519');
+    setCredential('');
     setPassphrase('');
     setGroupName('生产环境');
     setTags('');
@@ -181,7 +181,12 @@ export const ServerModal: React.FC = () => {
             <label className="block mb-1" style={{ color: currentTheme.ui.textMuted }}>认证方式</label>
             <select
               value={authType}
-              onChange={(e) => setAuthType(e.target.value as AuthType)}
+              onChange={(e) => {
+                const nextType = e.target.value as AuthType;
+                setAuthType(nextType);
+                setCredential('');
+                setPassphrase('');
+              }}
               className="w-full border rounded px-2.5 py-1.5 focus:outline-none transition-colors"
               style={{
                 backgroundColor: currentTheme.ui.inputBg,
