@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SafetyCheckResult } from '../../types';
-import { isDiagnosticCommand } from './commandUtils';
+import { formatCommandExitOutput, isDiagnosticCommand } from './commandUtils';
 
 export { isDiagnosticCommand };
 
@@ -156,7 +156,7 @@ export async function executeWorkspaceToolCall(
         } else {
           const isDiag = isDiagnosticCommand(cmd);
           return {
-            stdout: `退出码 ${res.exit_code}${isDiag ? ' (探测判断结果)' : ''}\n${res.stdout ? `标准输出:\n${res.stdout}\n` : ''}${res.stderr ? `错误输出:\n${res.stderr}` : ''}`,
+            stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, isDiag),
             isError: !isDiag,
           };
         }
@@ -195,7 +195,13 @@ export async function executeWorkspaceToolCall(
           hostId,
           command: cmd,
         });
-        return { stdout: res.stdout || res.stderr };
+        if (res.exit_code !== 0) {
+          return {
+            stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, false),
+            isError: true,
+          };
+        }
+        return { stdout: res.stdout || res.stderr || '(系统信息输出为空)' };
       }
 
       case 'host_transfer': {

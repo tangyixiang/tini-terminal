@@ -130,6 +130,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const id = wsId || get().activeWorkspaceId || 'default';
     set((state) => {
       const prev = state.workspaceStates[id] || createDefaultWorkspaceAgentState();
+      // 覆盖旧 resolver 前先行释放，避免前一次等待永久挂起
+      if (prev.approvalResolver && prev.approvalResolver !== resolver) {
+        prev.approvalResolver(false);
+      }
       return {
         workspaceStates: {
           ...state.workspaceStates,

@@ -1,7 +1,7 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import type { SafetyCheckResult, SftpListResult } from '../../types';
-import { isDiagnosticCommand } from './commandUtils';
+import { formatCommandExitOutput, isDiagnosticCommand } from './commandUtils';
 
 export { isDiagnosticCommand };
 
@@ -108,13 +108,25 @@ export async function executeToolCall(
     };
   }
 
+  // 依据终端会话精确判定目标环境，禁止猜测
+  const resolveTarget = (): { isLocal: boolean } | { error: string } => {
+    const currentTab = useTerminalStore
+      .getState()
+      .tabs.find((t) => t.sessionId === sessionId || t.id === sessionId);
+    if (!currentTab) {
+      return { error: `未找到终端会话 ${sessionId}，请确认标签页仍然存在` };
+    }
+    return { isLocal: !currentTab.isSsh };
+  };
+
   try {
     switch (toolName) {
       case 'terminal_exec': {
         const cmd = args.command as string;
-        const tabs = useTerminalStore.getState().tabs;
-        const currentTab = tabs.find((t) => t.sessionId === sessionId || t.id === sessionId);
-        const isLocal = currentTab ? !currentTab.isSsh : (!sessionId || sessionId.startsWith('local'));
+        const target = resolveTarget();
+        if ('error' in target) {
+          return { stdout: target.error, isError: true };
+        }
 
         const channel = new Channel<{ stream: string; data: string }>();
         channel.onmessage = (payload) => {
@@ -123,7 +135,7 @@ export async function executeToolCall(
           }
         };
 
-        const res = isLocal
+        const res = target.isLocal
           ? await invoke<{
               exit_code: number;
               stdout: string;
@@ -150,7 +162,7 @@ export async function executeToolCall(
           // 探测性命令（如 grep、test、[ ]、pidof、diff 等）非零退出码仅代表匹配结果或分支判断，不代表运维指令执行失败
           const isDiag = isDiagnosticCommand(cmd);
           return {
-            stdout: `退出码 ${res.exit_code}${isDiag ? ' (探测判断结果)' : ''}\n${res.stdout ? `标准输出:\n${res.stdout}\n` : ''}${res.stderr ? `错误输出:\n${res.stderr}` : ''}`,
+            stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, isDiag),
             isError: !isDiag,
           };
         }
@@ -192,17 +204,37 @@ export async function executeToolCall(
       }
 
       case 'system_info': {
-        const tabs = useTerminalStore.getState().tabs;
-        const currentTab = tabs.find((t) => t.sessionId === sessionId || t.id === sessionId);
-        const isLocal = currentTab ? !currentTab.isSsh : (!sessionId || sessionId.startsWith('local'));
+        const target = resolveTarget();
+        if ('error' in target) {
+          return { stdout: target.error, isError: true };
+        }
         const cmd = 'uname -a && uptime && (free -m 2>/dev/null || top -l 1 | head -n 10)';
-        const res = isLocal
-          ? await invoke<{ stdout: string }>('exec_local_command', { command: cmd })
-          : await invoke<{ stdout: string }>('ssh_exec_command', {
-              sessionId,
-              command: cmd,
-            });
-        return { stdout: res.stdout };
+
+        // 显式提供 channel，与后端命令签名保持一致
+        const channel = new Channel<{ stream: string; data: string }>();
+        channel.onmessage = (payload) => {
+          if (onStream && payload?.data) {
+            onStream(payload.data);
+          }
+        };
+
+        const res = target.isLocal
+          ? await invoke<{ exit_code: number; stdout: string; stderr: string }>(
+              'exec_local_command',
+              { command: cmd, channel }
+            )
+          : await invoke<{ exit_code: number; stdout: string; stderr: string }>(
+              'ssh_exec_command',
+              { sessionId, command: cmd, channel }
+            );
+
+        if (res.exit_code !== 0) {
+          return {
+            stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, false),
+            isError: true,
+          };
+        }
+        return { stdout: res.stdout || '(系统信息输出为空)' };
       }
 
       default:

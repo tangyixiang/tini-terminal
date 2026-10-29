@@ -745,6 +745,9 @@ export const AgentPanel: React.FC = () => {
                   const el = document.getElementById(`tool-call-${pendingToolCall.id}`);
                   if (el) {
                     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  } else {
+                    // 卡片尚未提交到 DOM 时，滚动至最新消息位置
+                    scrollToBottom();
                   }
                 }}
                 className="underline opacity-75 hover:opacity-100 cursor-pointer transition-opacity shrink-0"

@@ -41,8 +41,10 @@ pub struct AgentService {
 
 impl AgentService {
     pub fn new() -> Self {
+        // 仅限制连接与单次读取间隔，避免长文本流式输出被整体超时中断
         let client = Client::builder()
-            .timeout(Duration::from_secs(180))
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(180))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -167,61 +169,77 @@ impl AgentService {
         }
 
         let mut pending_bytes: Vec<u8> = Vec::new();
+        let mut stream_error: Option<String> = None;
 
-        while let Ok(Some(chunk)) = resp.chunk().await {
+        loop {
             if self.is_aborted(&req.request_id) {
                 break;
             }
 
-            pending_bytes.extend_from_slice(&chunk);
+            match resp.chunk().await {
+                Ok(Some(chunk)) => {
+                    pending_bytes.extend_from_slice(&chunk);
 
-            match std::str::from_utf8(&pending_bytes) {
-                Ok(valid_str) => {
-                    let text = valid_str.to_string();
-                    pending_bytes.clear();
-                    if channel
-                        .send(AiStreamEvent {
-                            event_type: "chunk".to_string(),
-                            data: Some(text),
-                        })
-                        .is_err()
-                    {
-                        break;
+                    match std::str::from_utf8(&pending_bytes) {
+                        Ok(valid_str) => {
+                            let text = valid_str.to_string();
+                            pending_bytes.clear();
+                            if channel
+                                .send(AiStreamEvent {
+                                    event_type: "chunk".to_string(),
+                                    data: Some(text),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let valid_up_to = e.valid_up_to();
+                            if valid_up_to > 0 {
+                                let valid_str =
+                                    match std::str::from_utf8(&pending_bytes[..valid_up_to]) {
+                                        Ok(s) => s.to_string(),
+                                        Err(_) => String::from_utf8_lossy(
+                                            &pending_bytes[..valid_up_to],
+                                        )
+                                        .to_string(),
+                                    };
+                                pending_bytes.drain(..valid_up_to);
+                                if channel
+                                    .send(AiStreamEvent {
+                                        event_type: "chunk".to_string(),
+                                        data: Some(valid_str),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            if e.error_len().is_some() {
+                                let lossy_str =
+                                    String::from_utf8_lossy(&pending_bytes).to_string();
+                                pending_bytes.clear();
+                                if channel
+                                    .send(AiStreamEvent {
+                                        event_type: "chunk".to_string(),
+                                        data: Some(lossy_str),
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
+                Ok(None) => break,
                 Err(e) => {
-                    let valid_up_to = e.valid_up_to();
-                    if valid_up_to > 0 {
-                        let valid_str = match std::str::from_utf8(&pending_bytes[..valid_up_to]) {
-                            Ok(s) => s.to_string(),
-                            Err(_) => {
-                                String::from_utf8_lossy(&pending_bytes[..valid_up_to]).to_string()
-                            }
-                        };
-                        pending_bytes.drain(..valid_up_to);
-                        if channel
-                            .send(AiStreamEvent {
-                                event_type: "chunk".to_string(),
-                                data: Some(valid_str),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
+                    // 流式传输中途异常必须显式上报，避免上层误判为正常完成而丢失结论
+                    if !self.is_aborted(&req.request_id) {
+                        stream_error = Some(format!("大模型流式响应中断: {}", e));
                     }
-                    if e.error_len().is_some() {
-                        let lossy_str = String::from_utf8_lossy(&pending_bytes).to_string();
-                        pending_bytes.clear();
-                        if channel
-                            .send(AiStreamEvent {
-                                event_type: "chunk".to_string(),
-                                data: Some(lossy_str),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
+                    break;
                 }
             }
         }
@@ -235,6 +253,15 @@ impl AgentService {
         }
 
         self.clear_aborted(&req.request_id);
+
+        if let Some(err_msg) = stream_error {
+            let _ = channel.send(AiStreamEvent {
+                event_type: "error".to_string(),
+                data: Some(err_msg.clone()),
+            });
+            return Err(err_msg);
+        }
+
         let _ = channel.send(AiStreamEvent {
             event_type: "done".to_string(),
             data: None,

@@ -3,11 +3,31 @@ import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { AGENT_TOOLS, checkSafety, executeToolCall } from './tools';
-import { isReadOnlyCommand } from './commandUtils';
+import { isReadOnlyCommand, truncateToolResult } from './commandUtils';
+import {
+  buildConclusionMessages,
+  buildConclusionPrompt,
+  buildDeterministicConclusion,
+  buildHistoryToolResult,
+  hasConclusionReport,
+  parseThinkTag,
+  sanitizeHistoryContent,
+} from './summary';
 import type { ToolCallItem } from '../../types';
 
 const abortControllers: Record<string, AbortController> = {};
 const currentRequestIds: Record<string, string> = {};
+
+/** 流式渲染节流间隔，兼顾流畅度与渲染开销 */
+const STREAM_FLUSH_INTERVAL_MS = 50;
+
+/** 单次任务最大工具调用轮次 */
+const MAX_AGENT_LOOPS = 20;
+
+/** 判断指定会话是否存在进行中的任务 */
+export function isAgentTaskRunning(tabId: string): boolean {
+  return Boolean(abortControllers[tabId]);
+}
 
 interface StreamEventPayload {
   event_type: 'chunk' | 'error' | 'done';
@@ -112,7 +132,9 @@ async function streamChatCompletion(
 
 export function abortAgentTask(targetTabId?: string): void {
   const terminalStore = useTerminalStore.getState();
-  const tabId = targetTabId || terminalStore.activeTabId || 'global';
+  const tabId = targetTabId || terminalStore.activeTabId;
+
+  if (!tabId) return;
 
   const ctrl = abortControllers[tabId];
   if (ctrl) {
@@ -150,7 +172,12 @@ export function abortAgentTask(targetTabId?: string): void {
 
 export async function runAgentTask(userPrompt: string, targetTabId?: string): Promise<void> {
   const terminalStore = useTerminalStore.getState();
-  const tabId = targetTabId || terminalStore.activeTabId || 'global';
+  const tabId = targetTabId || terminalStore.activeTabId;
+
+  // 无有效终端会话时拒绝执行，避免多个调用共用兜底键导致中止错乱
+  if (!tabId) {
+    return;
+  }
 
   if (abortControllers[tabId]) {
     abortAgentTask(tabId);
@@ -164,7 +191,11 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
   const settingsStore = useSettingsStore.getState();
 
   const activeTab = terminalStore.tabs.find((t) => t.id === tabId);
-  const sessionId = activeTab?.sessionId || 'local-session';
+  if (!activeTab) {
+    delete abortControllers[tabId];
+    return;
+  }
+  const sessionId = activeTab.sessionId;
 
   // 1. 获取该会话专属历史消息（最多保留最近 20 条）
   const sessionState = agentStore.getSessionState(tabId);
@@ -209,7 +240,8 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 6. 整体目标与最终验证驱动，严禁误报未完成:
    - 运维任务以最终达成的业务目标与最终验证状态为唯一评判准绳。
    - 凡是在执行过程中作为前置探测、环境排查、分支条件判断的命令（如 grep、test、[ ]、pidof、which、diff、systemctl is-active 等返回非零退出码），绝不属于操作失败。
-   - 凡是前期报错或状态未就绪，但已被后续步骤成功修复、重新启动、正确配置或成功创建的，均属任务圆满完成，严禁将中间排查或自愈过程误判为"任务未完成"或"操作失败"。`;
+   - 凡是前期报错或状态未就绪，但已被后续步骤成功修复、重新启动、正确配置或成功创建的，均属任务圆满完成，严禁将中间排查或自愈过程误判为"任务未完成"或"操作失败"。
+   - 判定为未完成或异常时，必须明确指出是哪一项最终验证结果不达标，禁止使用笼统模糊的表述。`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -222,6 +254,8 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         conversation.push({ role: 'user', content: m.content });
       }
     } else if (m.role === 'assistant') {
+      // 中止标记属于历史痕迹，不得进入模型上下文，避免复述为"未完成"
+      const historyText = sanitizeHistoryContent(m.content);
       if (m.toolCalls && m.toolCalls.length > 0) {
         const validCalls = m.toolCalls.map((tc) => ({
           id: tc.id,
@@ -233,20 +267,20 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         }));
         conversation.push({
           role: 'assistant',
-          content: m.content || null,
+          content: historyText || null,
           tool_calls: validCalls,
         });
         for (const tc of m.toolCalls) {
           conversation.push({
             role: 'tool',
             tool_call_id: tc.id,
-            content: tc.result || (tc.status === 'rejected' ? '用户拒绝执行' : '(无输出)'),
+            content: buildHistoryToolResult(tc),
           });
         }
-      } else if (m.content && m.content.trim()) {
+      } else if (historyText) {
         conversation.push({
           role: 'assistant',
-          content: m.content,
+          content: historyText,
         });
       }
     }
@@ -279,11 +313,15 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
     toolCalls: toolCallItems,
   });
 
-  const maxLoops = 20;
+  const maxLoops = MAX_AGENT_LOOPS;
   let loopCount = 0;
 
   let accumulatedThinking = '';
   let accumulatedContent = '';
+  // 每次工具执行完毕后重置结论基线，确保只认最近一次执行之后的结论文本
+  let conclusionBaseline = 0;
+  const hasFreshConclusion = () =>
+    hasConclusionReport(accumulatedContent.slice(conclusionBaseline));
 
   try {
     while (loopCount < maxLoops) {
@@ -294,9 +332,18 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
       let loopThinking = '';
       let loopContent = '';
       const toolCallsMap: Map<number, { id: string; name: string; args: string }> = new Map();
-      let isInThinkTag = false;
+      let thinkState: { inThink: boolean; pending: string } = { inThink: false, pending: '' };
       const loopStartTime = Date.now();
       let thinkingDuration: number | undefined = undefined;
+      // 流式刷新节流状态
+      let lastFlushAt = 0;
+      let pendingFlush: (() => void) | null = null;
+      const flushPending = () => {
+        if (pendingFlush) {
+          pendingFlush();
+          pendingFlush = null;
+        }
+      };
 
       const handleLines = (lines: string[]) => {
         let updated = false;
@@ -312,28 +359,19 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
             const delta = parsed.choices?.[0]?.delta;
             if (!delta) continue;
 
-            // 深度思考标签识别与提取
+            // 深度思考标签识别与提取（正确处理跨片段标签）
             if (delta.reasoning_content) {
               loopThinking += delta.reasoning_content;
               updated = true;
             } else if (delta.content) {
-              let text = delta.content;
-              if (text.includes('<think>')) {
-                isInThinkTag = true;
-                text = text.replace('<think>', '');
-              }
-              if (text.includes('</think>')) {
-                isInThinkTag = false;
-                const parts = text.split('</think>');
-                loopThinking += parts[0];
-                text = parts[1] || '';
+              const parsed = parseThinkTag(delta.content, thinkState);
+              thinkState = parsed.state;
+              if (parsed.thinking) {
+                loopThinking += parsed.thinking;
                 thinkingDuration = Date.now() - loopStartTime;
               }
-
-              if (isInThinkTag) {
-                loopThinking += text;
-              } else {
-                loopContent += text;
+              if (parsed.content) {
+                loopContent += parsed.content;
               }
               updated = true;
             }
@@ -363,12 +401,27 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
             ? (loopContent ? `${accumulatedContent}\n\n${loopContent}` : accumulatedContent)
             : loopContent;
 
-          agentStore.updateLastMessage(tabId, (m) => ({
-            ...m,
-            thinking: mergedThinking || m.thinking,
-            thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
-            content: mergedContent,
-          }));
+          // 流式高频刷新做节流，避免每个 token 都复制整个消息数组导致卡顿
+          const now = Date.now();
+          const shouldFlush = now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS;
+          if (shouldFlush) {
+            lastFlushAt = now;
+            agentStore.updateLastMessage(tabId, (m) => ({
+              ...m,
+              thinking: mergedThinking || m.thinking,
+              thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
+              content: mergedContent,
+            }));
+          } else {
+            pendingFlush = () => {
+              agentStore.updateLastMessage(tabId, (m) => ({
+                ...m,
+                thinking: mergedThinking || m.thinking,
+                thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
+                content: mergedContent,
+              }));
+            };
+          }
         }
       };
 
@@ -397,6 +450,9 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         handleLines([buffer.trim()]);
         buffer = '';
       }
+
+      // 流式结束前落地最后一次未刷新的增量
+      flushPending();
 
       if (signal.aborted) break;
 
@@ -433,51 +489,75 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 若已执行过工具且模型在当前轮次中未输出文字结论，补齐上下文并显式请求模型输出最终结论报告
-        if (toolCallItems.length > 0 && !accumulatedContent.trim() && !signal.aborted) {
-          conversation.push({
-            role: 'assistant',
-            content: '已执行完成上述运维操作。',
-          });
-          conversation.push({
-            role: 'user',
-            content: `所有运维步骤与工具调用已执行完毕。请结合上述真实执行日志与最终验证结果，向用户输出清晰精炼的最终执行结论与分析报告：
-1. 必须以整体运维目标是否达成及最终验证结果为唯一评判标准。
-2. 前期用于探测、分支判断的非零退出码，或已被后续步骤成功修复/启动的中间状态，一律不得判定为操作未完成。只要最终服务或目标状态正常，必须明确汇报已圆满完成。
-3. 请按以下格式输出精炼报告：
-### 执行结论
-- 目标达成情况: [已完成 / 异常]
-- 关键状态与验证: [提炼最终检查结果、服务状态或端口情况]
-- 重点变更说明: [若有配置修改或脚本部署请简要列出]`,
-          });
+        // 已执行过工具但尚未产出结构化结论时，补齐上下文并显式请求模型输出最终结论报告
+        if (
+          toolCallItems.length > 0 &&
+          !signal.aborted &&
+          !hasFreshConclusion()
+        ) {
+          // 结论请求基于独立消息序列构造，不改动原对话上下文
+          const conclusionPrompt = buildConclusionPrompt('session', toolCallItems);
           let summaryBuffer = '';
           loopThinking = '';
           loopContent = '';
-          isInThinkTag = false;
-          await streamChatCompletion(
-            baseUrl,
-            apiKey || '',
-            {
-              model,
-              messages: conversation,
-              temperature: 0.2,
-              stream: true,
-            },
-            signal,
-            (chunkText) => {
-              summaryBuffer += chunkText;
-              const lines = summaryBuffer.split('\n');
-              summaryBuffer = lines.pop() || '';
-              handleLines(lines);
-            },
-            tabId
-          );
+          thinkState = { inThink: false, pending: '' };
+          try {
+            await streamChatCompletion(
+              baseUrl,
+              apiKey || '',
+              {
+                model,
+                messages: buildConclusionMessages(conversation, conclusionPrompt),
+                temperature: 0.2,
+                stream: true,
+              },
+              signal,
+              (chunkText) => {
+                summaryBuffer += chunkText;
+                const lines = summaryBuffer.split('\n');
+                summaryBuffer = lines.pop() || '';
+                handleLines(lines);
+              },
+              tabId
+            );
+          } catch {
+            // 结论请求异常交由下方兜底逻辑保证必出结论
+          }
           if (summaryBuffer.trim()) {
             handleLines([summaryBuffer.trim()]);
           }
+          flushPending();
           if (loopContent.trim()) {
-            accumulatedContent = loopContent.trim();
+            accumulatedContent = accumulatedContent.trim()
+              ? `${accumulatedContent.trim()}\n\n${loopContent.trim()}`
+              : loopContent.trim();
+            agentStore.updateLastMessage(tabId, (m) => ({
+              ...m,
+              content: accumulatedContent,
+            }));
           }
+        }
+
+        // 兜底闭环：模型未产出结构化结论时，基于真实执行状态生成结论，杜绝静默空答
+        if (
+          !signal.aborted &&
+          toolCallItems.length > 0 &&
+          !hasFreshConclusion()
+        ) {
+          const fallback = buildDeterministicConclusion(toolCallItems);
+          accumulatedContent = accumulatedContent.trim()
+            ? `${accumulatedContent.trim()}\n\n${fallback}`
+            : fallback;
+          agentStore.updateLastMessage(tabId, (m) => ({
+            ...m,
+            content: accumulatedContent,
+          }));
+        } else if (!signal.aborted && toolCallItems.length === 0 && !accumulatedContent.trim()) {
+          // 模型未返回任何文本且未调用工具时明确呈现真实状态，避免空白消息
+          agentStore.updateLastMessage(tabId, (m) => ({
+            ...m,
+            content: '模型未返回任何内容，请重试或检查模型配置。',
+          }));
         }
         break;
       }
@@ -615,11 +695,26 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         conversation.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: toolCallItem.result || '(无输出)',
+          // 界面保留完整输出，送入模型的上下文按长度截断，避免撑爆窗口
+          content: truncateToolResult(toolCallItem.result || '(无输出)'),
         });
       }
+
+      // 本轮工具执行完毕，后续结论文本必须基于最新执行状态重新生成
+      conclusionBaseline = accumulatedContent.length;
     }
 
+    // 轮次耗尽闭环：达到最大循环仍无结构化结论时，依据真实执行状态补齐，避免静默结束
+    if (!signal.aborted && toolCallItems.length > 0 && !hasFreshConclusion()) {
+      const fallback = buildDeterministicConclusion(toolCallItems);
+      accumulatedContent = accumulatedContent.trim()
+        ? `${accumulatedContent.trim()}\n\n${fallback}`
+        : fallback;
+      agentStore.updateLastMessage(tabId, (m) => ({
+        ...m,
+        content: accumulatedContent,
+      }));
+    }
 
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {
@@ -634,11 +729,15 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         return m;
       });
     } else {
+      // 执行异常时仍需给出闭环结论：保留真实执行状态汇总并追加异常原因
+      const errorNote = `任务执行异常: ${err?.message || err}`;
+      const closure =
+        toolCallItems.length > 0 && !hasFreshConclusion()
+          ? buildDeterministicConclusion(toolCallItems)
+          : '';
       agentStore.updateLastMessage(tabId, (m) => ({
         ...m,
-        content:
-          (m.content ? m.content + '\n' : '') +
-          `任务执行异常: ${err?.message || err}`,
+        content: [m.content, closure, errorNote].filter((part) => part && part.trim()).join('\n\n'),
       }));
     }
   } finally {

@@ -88,13 +88,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     });
   },
 
-  setPendingApproval: (
-    tabId: string,
-    toolCall: ToolCallItem | null,
-    resolver: ((allowed: boolean) => void) | null
-  ) => {
+  setPendingApproval: (tabId, toolCall, resolver) => {
     set((state) => {
       const prev = state.sessions[tabId] || createDefaultSessionState();
+      // 覆盖旧 resolver 前先行释放，避免前一次等待永久挂起
+      if (prev.approvalResolver && prev.approvalResolver !== resolver) {
+        prev.approvalResolver(false);
+      }
       return {
         sessions: {
           ...state.sessions,

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { TerminalTab, ServerRecord } from '../types';
 import { useAgentStore } from './useAgentStore';
+import { abortAgentTask, isAgentTaskRunning } from '../lib/agent/runner';
 
 interface TerminalState {
   tabs: TerminalTab[];
@@ -57,6 +58,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   closeTab: (id: string) => {
     const { tabs, activeTabId } = get();
     const tab = tabs.find((t) => t.id === id);
+
+    // 关闭前先中止该会话进行中的任务，避免后台任务向已删除会话持续写入
+    if (isAgentTaskRunning(id)) {
+      abortAgentTask(id);
+    }
+
     if (tab && window.__TAURI_INTERNALS__) {
       invoke('close_terminal', { sessionId: tab.sessionId, isSsh: tab.isSsh }).catch(() => {});
     }
