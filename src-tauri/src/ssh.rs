@@ -125,11 +125,23 @@ impl SshManager {
         match options.auth_type.as_str() {
             "password" => {
                 let pass = options.credential.clone().unwrap_or_default();
+                if pass.is_empty() {
+                    return Err(format!(
+                        "未填写登录密码：请为主机 {} 补充密码或改用私钥认证",
+                        options.host
+                    ));
+                }
                 sess.userauth_password(&options.username, &pass)
                     .map_err(|e| format!("密码认证失败: {}", e))?;
             }
             "key" => {
                 let key_data = options.credential.clone().unwrap_or_default();
+                if key_data.trim().is_empty() {
+                    return Err(format!(
+                        "未配置私钥：请为主机 {} 填写私钥路径或私钥内容",
+                        options.host
+                    ));
+                }
                 let pass = options.passphrase.as_deref();
                 let key_path = Path::new(&key_data);
 
@@ -495,12 +507,23 @@ impl SshManager {
             }
         }
 
-        let exit_code = ch.exit_status().unwrap_or(0);
+        // 取不到退出码时不能默认按成功处理，明确以 -1 上报并补充说明
+        let (exit_code, stderr_text) = match ch.exit_status() {
+            Ok(code) => (code, String::from_utf8_lossy(&stderr_buf).to_string()),
+            Err(e) => {
+                let mut text = String::from_utf8_lossy(&stderr_buf).to_string();
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(&format!("[无法获取远程命令退出码: {}]", e));
+                (-1, text)
+            }
+        };
 
         Ok(SshExecResult {
             exit_code,
             stdout: String::from_utf8_lossy(&stdout_buf).to_string(),
-            stderr: String::from_utf8_lossy(&stderr_buf).to_string(),
+            stderr: stderr_text,
             duration_ms: start_time.elapsed().as_millis() as u64,
         })
     }

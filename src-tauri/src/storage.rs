@@ -4,6 +4,34 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::crypto::CredentialCipher;
+
+fn encrypt_option(cipher: &CredentialCipher, value: &Option<String>) -> Option<String> {
+    value.as_ref().map(|plain| {
+        if plain.is_empty() {
+            String::new()
+        } else if CredentialCipher::is_encrypted(plain) {
+            // 已加密内容（如列表读取后原样回存）直接复用，避免二次加密
+            plain.clone()
+        } else {
+            cipher.encrypt(plain)
+        }
+    })
+}
+
+fn decrypt_option(cipher: &CredentialCipher, value: Option<String>) -> Option<String> {
+    value.map(|stored| {
+        if stored.is_empty() {
+            String::new()
+        } else if CredentialCipher::is_encrypted(&stored) {
+            cipher.decrypt(&stored)
+        } else {
+            // 历史明文原样返回，下次保存时自动迁移为密文
+            stored
+        }
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerRecord {
     pub id: String,
@@ -78,6 +106,10 @@ impl StorageManager {
 
     fn get_connection(&self) -> Result<Connection> {
         Connection::open(&self.db_path)
+    }
+
+    fn cipher(&self) -> CredentialCipher {
+        CredentialCipher::new()
     }
 
     fn init_db(&self) -> Result<()> {
@@ -160,17 +192,14 @@ impl StorageManager {
         }
 
         // Seed initial default settings if not exists
-        let has_ai: i64 = conn.query_row(
-            "SELECT count(*) FROM settings WHERE key = 'ai_provider'",
+        // AI 模型配置不再由后端写入默认值，统一由前端预设提供，避免厂商信息硬编码在数据库中
+        let has_danger: i64 = conn.query_row(
+            "SELECT count(*) FROM settings WHERE key = 'danger_level'",
             [],
             |r| r.get(0),
         ).unwrap_or(0);
 
-        if has_ai == 0 {
-            let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('ai_provider', 'DeepSeek')", []);
-            let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('ai_base_url', 'https://api.deepseek.com/v1')", []);
-            let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('ai_api_key', '')", []);
-            let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('ai_model', 'deepseek-chat')", []);
+        if has_danger == 0 {
             let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('danger_level', 'high')", []);
         }
 
@@ -183,7 +212,10 @@ impl StorageManager {
             "SELECT id, name, host, port, username, auth_type, credential, passphrase, group_name, tags, jump_host_id, created_at FROM servers ORDER BY created_at DESC",
         )?;
 
+        let cipher = self.cipher();
         let rows = stmt.query_map([], |row| {
+            let credential: Option<String> = row.get(6)?;
+            let passphrase: Option<String> = row.get(7)?;
             Ok(ServerRecord {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -191,8 +223,8 @@ impl StorageManager {
                 port: row.get(3)?,
                 username: row.get(4)?,
                 auth_type: row.get(5)?,
-                credential: row.get(6)?,
-                passphrase: row.get(7)?,
+                credential: decrypt_option(&cipher, credential),
+                passphrase: decrypt_option(&cipher, passphrase),
                 group_name: row.get(8)?,
                 tags: row.get(9)?,
                 jump_host_id: row.get(10)?,
@@ -211,6 +243,11 @@ impl StorageManager {
 
     pub fn save_server(&self, server: &ServerRecord) -> Result<()> {
         let conn = self.get_connection()?;
+        let cipher = self.cipher();
+        // 凭证统一加密落库，历史明文在下次保存时自动迁移
+        let credential = encrypt_option(&cipher, &server.credential);
+        let passphrase = encrypt_option(&cipher, &server.passphrase);
+
         conn.execute(
             "
             INSERT INTO servers (id, name, host, port, username, auth_type, credential, passphrase, group_name, tags, jump_host_id, created_at)
@@ -234,8 +271,8 @@ impl StorageManager {
                 server.port,
                 server.username,
                 server.auth_type,
-                server.credential,
-                server.passphrase,
+                credential,
+                passphrase,
                 server.group_name,
                 server.tags,
                 server.jump_host_id,

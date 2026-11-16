@@ -21,10 +21,11 @@ import {
 import { useWorkspaceStore, createDefaultWorkspaceAgentState } from '../../stores/useWorkspaceStore';
 import { useServerStore } from '../../stores/useServerStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
-import { BUILTIN_THEMES } from '../../types/theme';
+import { useAgentStore } from '../../stores/useAgentStore';
+import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
 import { runWorkspaceAgentTask, abortWorkspaceAgentTask } from '../../lib/agent/workspaceRunner';
 import { MarkdownView } from '../agent/MarkdownView';
-import type { ToolCallItem } from '../../types';
+import type { PermissionMode, ToolCallItem } from '../../types';
 
 export const WorkspaceAgentView: React.FC = () => {
   const {
@@ -38,8 +39,17 @@ export const WorkspaceAgentView: React.FC = () => {
   } = useWorkspaceStore();
 
   const { servers } = useServerStore();
-  const { themeId, terminalFontSize } = useSettingsStore();
+  const { themeId, terminalFontSize, saveSettings } = useSettingsStore();
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
+
+  /** 切换权限模式时同步会话级与持久化设置，保持全局一致 */
+  const handlePermissionModeChange = (mode: PermissionMode) => {
+    setPermissionMode(mode);
+    useAgentStore.getState().setPermissionMode(mode);
+    saveSettings({ permission_mode: mode }).catch((err) => {
+      console.error('保存授权模式失败:', err);
+    });
+  };
 
   // 动态字体大小联动（由系统全局字体配置统一驱动）
   const baseFontSize = terminalFontSize || 14;
@@ -232,7 +242,7 @@ export const WorkspaceAgentView: React.FC = () => {
             }}
           >
             <button
-              onClick={() => setPermissionMode('read_only')}
+              onClick={() => handlePermissionModeChange('read_only')}
               className={`h-full px-2.5 rounded transition-colors cursor-pointer flex items-center justify-center font-medium ${
                 permissionMode === 'read_only'
                   ? 'bg-white/10 font-bold text-emerald-400'
@@ -243,7 +253,7 @@ export const WorkspaceAgentView: React.FC = () => {
               只读
             </button>
             <button
-              onClick={() => setPermissionMode('ask')}
+              onClick={() => handlePermissionModeChange('ask')}
               className={`h-full px-2.5 rounded transition-colors cursor-pointer flex items-center justify-center font-medium ${
                 permissionMode === 'ask'
                   ? 'bg-white/10 font-bold text-emerald-400'
@@ -254,7 +264,7 @@ export const WorkspaceAgentView: React.FC = () => {
               确认
             </button>
             <button
-              onClick={() => setPermissionMode('full')}
+              onClick={() => handlePermissionModeChange('full')}
               className={`h-full px-2.5 rounded transition-colors cursor-pointer flex items-center justify-center font-medium ${
                 permissionMode === 'full'
                   ? 'bg-white/10 font-bold text-emerald-400'
@@ -1000,8 +1010,7 @@ export const WorkspaceAgentView: React.FC = () => {
                 disabled={!inputPrompt.trim()}
                 className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
                 style={{
-                  backgroundColor: '#23d18b',
-                  color: '#064e3b',
+                  ...getPrimaryButtonStyle(currentTheme),
                   fontSize: `${subFontSize}px`,
                 }}
               >

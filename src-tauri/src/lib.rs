@@ -1,4 +1,5 @@
 mod agent;
+mod crypto;
 mod pty;
 mod safety;
 mod session;
@@ -10,7 +11,7 @@ mod workspace;
 
 use agent::{AgentService, AiStreamEvent, StreamAiChatRequest, TestAiRequest, TestAiResponse};
 use pty::{PtyManager, TerminalOutputPayload};
-use safety::{SafetyCheckResult, SafetyManager};
+use safety::{SafetyCheckResult, SafetyLevel, SafetyManager};
 use session::{SessionContext, SessionInfo, SessionManager};
 use sftp::{SftpListResult, SftpManager};
 use ssh::{ExecStreamPayload, SshConnectOptions, SshExecResult, SshManager};
@@ -224,10 +225,20 @@ async fn exec_local_command(
         let stdout_data = t_out.join().unwrap_or_default();
         let stderr_data = t_err.join().unwrap_or_default();
 
+        // 无退出码通常代表进程被信号终止，需明确说明而非伪装成 -1
+        let exit_code = status.code().unwrap_or(-1);
+        let mut stderr_text = String::from_utf8_lossy(&stderr_data).to_string();
+        if status.code().is_none() {
+            if !stderr_text.is_empty() && !stderr_text.ends_with('\n') {
+                stderr_text.push('\n');
+            }
+            stderr_text.push_str("[本地命令未正常退出，可能已被信号终止]");
+        }
+
         Ok(SshExecResult {
-            exit_code: status.code().unwrap_or(-1),
+            exit_code,
             stdout: String::from_utf8_lossy(&stdout_data).to_string(),
-            stderr: String::from_utf8_lossy(&stderr_data).to_string(),
+            stderr: stderr_text,
             duration_ms: start.elapsed().as_millis() as u64,
         })
     })
@@ -436,8 +447,10 @@ async fn sftp_upload_file(
 fn check_command_safety(
     state: State<Arc<AppState>>,
     command: String,
+    danger_level: Option<String>,
 ) -> SafetyCheckResult {
-    state.safety.check_command(&command)
+    let level = SafetyLevel::from_str(danger_level.as_deref().unwrap_or("high"));
+    state.safety.check_command_with_level(&command, level)
 }
 
 #[tauri::command]

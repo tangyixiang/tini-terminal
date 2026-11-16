@@ -18,7 +18,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
-import { BUILTIN_THEMES } from '../../types/theme';
+import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
 import type { RemoteFileInfo, SftpListResult } from '../../types';
 
 type DialogType = 'new_folder' | 'new_file' | 'rename' | 'delete' | null;
@@ -296,7 +296,8 @@ export const FileManagerDrawer: React.FC = () => {
         });
         setFileContent(content);
       } else {
-        setFileContent('# 预览环境内容\nserver {\n    listen 80;\n    server_name localhost;\n}');
+        setFileContent('');
+        setStatusMsg('未检测到桌面端运行时，无法预览远程文件内容');
       }
     } catch (e: any) {
       setStatusMsg(`读取文件失败: ${e?.message || e}`);
@@ -337,7 +338,7 @@ export const FileManagerDrawer: React.FC = () => {
         });
         setStatusMsg(`已下载至: ${localPath}`);
       } else {
-        setStatusMsg(`已下载至 Downloads 目录`);
+        setStatusMsg('未检测到桌面端运行时，无法下载远程文件');
       }
     } catch (e: any) {
       setStatusMsg(`下载失败: ${e?.message || e}`);
@@ -761,8 +762,8 @@ export const FileManagerDrawer: React.FC = () => {
                 <button
                   onClick={handleSaveFile}
                   disabled={saving}
-                  className="px-2.5 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer text-black hover:opacity-90"
-                  style={{ backgroundColor: '#23d18b', color: '#064e3b' }}
+                  className="px-2.5 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer hover:opacity-90"
+                  style={getPrimaryButtonStyle(currentTheme)}
                 >
                   {saving ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -1077,7 +1078,7 @@ export const FileManagerDrawer: React.FC = () => {
                     ? 'bg-red-500 hover:bg-red-600 text-white'
                     : 'text-black'
                 }`}
-                style={activeDialog !== 'delete' ? { backgroundColor: '#23d18b', color: '#064e3b' } : undefined}
+                style={activeDialog !== 'delete' ? getPrimaryButtonStyle(currentTheme) : undefined}
               >
                 {activeDialog === 'delete' ? '确认删除' : '确定'}
               </button>

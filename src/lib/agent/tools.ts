@@ -1,6 +1,6 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
-import type { SafetyCheckResult, SftpListResult } from '../../types';
+import type { SafetyCheckResult, SafetyLevel, SftpListResult } from '../../types';
 import { formatCommandExitOutput, isDiagnosticCommand } from './commandUtils';
 
 export { isDiagnosticCommand };
@@ -245,9 +245,15 @@ export async function executeToolCall(
   }
 }
 
-export async function checkSafety(command: string): Promise<SafetyCheckResult> {
+export async function checkSafety(
+  command: string,
+  dangerLevel: SafetyLevel = 'high'
+): Promise<SafetyCheckResult> {
   if (window.__TAURI_INTERNALS__) {
-    return await invoke<SafetyCheckResult>('check_command_safety', { command });
+    return await invoke<SafetyCheckResult>('check_command_safety', {
+      command,
+      dangerLevel,
+    });
   }
 
   const isDanger = /rm\s+-[rfRF]{1,4}\s+(\/|\/\*)/.test(command);

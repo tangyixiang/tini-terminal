@@ -3,8 +3,16 @@ import { X, CheckCircle2, AlertCircle, Loader2, Palette, Sparkles } from 'lucide
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useAgentStore } from '../../stores/useAgentStore';
-import { BUILTIN_THEMES, type ThemeId } from '../../types/theme';
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore';
+import { BUILTIN_THEMES, getPrimaryButtonStyle, type ThemeId } from '../../types/theme';
 import type { AiProviderConfig, PermissionMode } from '../../types';
+import {
+  AI_PROVIDER_PRESETS,
+  DEFAULT_PROVIDER_PRESET,
+  createDefaultProviderConfig,
+  createProviderConfigFromPreset,
+  findPreset,
+} from '../../lib/aiProviders';
 
 export const SettingsModal: React.FC = () => {
   const {
@@ -39,16 +47,7 @@ export const SettingsModal: React.FC = () => {
     const list =
       settings.providers && settings.providers.length > 0
         ? settings.providers
-        : [
-            {
-              id: 'provider-default',
-              name: (settings.ai_provider || 'DeepSeek') + ' 默认',
-              provider: settings.ai_provider || 'DeepSeek',
-              base_url: settings.ai_base_url || 'https://api.deepseek.com/v1',
-              api_key: settings.ai_api_key || '',
-              model: settings.ai_model || 'deepseek-chat',
-            },
-          ];
+        : [createDefaultProviderConfig('provider-default')];
     const activeId =
       settings.active_provider_id && list.some((p) => p.id === settings.active_provider_id)
         ? settings.active_provider_id
@@ -69,14 +68,8 @@ export const SettingsModal: React.FC = () => {
 
   const selectedProvider: AiProviderConfig =
     providers.find((p) => p.id === selectedProviderId) ||
-    providers[0] || {
-      id: 'temp',
-      name: '',
-      provider: 'DeepSeek',
-      base_url: 'https://api.deepseek.com/v1',
-      api_key: '',
-      model: 'deepseek-chat',
-    };
+    providers[0] ||
+    createDefaultProviderConfig('temp');
 
   const handleSelectProvider = (id: string) => {
     setSelectedProviderId(id);
@@ -89,14 +82,11 @@ export const SettingsModal: React.FC = () => {
 
   const handleAddProvider = () => {
     const newId = 'provider-' + Date.now();
-    const newProvider: AiProviderConfig = {
-      id: newId,
-      name: `新配置 ${providers.length + 1}`,
-      provider: 'DeepSeek',
-      base_url: 'https://api.deepseek.com/v1',
-      api_key: '',
-      model: 'deepseek-chat',
-    };
+    const newProvider = createProviderConfigFromPreset(
+      DEFAULT_PROVIDER_PRESET.name,
+      newId,
+      `新配置 ${providers.length + 1}`
+    );
     setProviders((prev) => [...prev, newProvider]);
     setSelectedProviderId(newId);
     setTestResult(null);
@@ -121,39 +111,21 @@ export const SettingsModal: React.FC = () => {
   };
 
   const handleProviderChange = (newProvider: string) => {
-    let newBaseUrl = '';
-    let newModel = '';
-    switch (newProvider) {
-      case 'DeepSeek':
-        newBaseUrl = 'https://api.deepseek.com/v1';
-        newModel = 'deepseek-chat';
-        break;
-      case 'OpenAI':
-        newBaseUrl = 'https://api.openai.com/v1';
-        newModel = 'gpt-4o';
-        break;
-      case 'Ollama':
-        newBaseUrl = 'http://localhost:11434/v1';
-        newModel = 'llama3.2';
-        break;
-      case 'vLLM':
-        newBaseUrl = 'http://localhost:8000/v1';
-        newModel = 'default';
-        break;
-      default:
-        break;
-    }
+    const preset = findPreset(newProvider);
     setProviders((prev) =>
-      prev.map((p) =>
-        p.id === selectedProviderId
-          ? {
-              ...p,
-              provider: newProvider,
-              ...(newBaseUrl ? { base_url: newBaseUrl } : {}),
-              ...(newModel ? { model: newModel } : {}),
-            }
-          : p
-      )
+      prev.map((p) => {
+        if (p.id !== selectedProviderId) return p;
+        // 自定义预设保留用户已填写的地址与模型，避免误覆盖
+        if (!preset || preset.custom) {
+          return { ...p, provider: newProvider };
+        }
+        return {
+          ...p,
+          provider: newProvider,
+          base_url: preset.baseUrl,
+          model: preset.model,
+        };
+      })
     );
   };
 
@@ -221,19 +193,31 @@ export const SettingsModal: React.FC = () => {
   };
 
   const handleSave = async () => {
-    const active =
-      providers.find((p) => p.id === activeProviderId) || providers[0];
+    const active = providers.find((p) => p.id === activeProviderId) || providers[0];
+    if (!active) return;
+
+    if (!active.base_url.trim()) {
+      setTestResult({ success: false, message: '请先填写模型服务地址 (Base URL)' });
+      return;
+    }
+    if (!active.model.trim()) {
+      setTestResult({ success: false, message: '请先填写模型名称' });
+      return;
+    }
+
     await saveSettings({
       providers,
       active_provider_id: activeProviderId,
-      ai_provider: active?.provider || 'DeepSeek',
-      ai_base_url: (active?.base_url || '').trim(),
-      ai_api_key: (active?.api_key || '').trim(),
-      ai_model: (active?.model || '').trim(),
+      ai_provider: active.provider,
+      ai_base_url: active.base_url.trim(),
+      ai_api_key: (active.api_key || '').trim(),
+      ai_model: active.model.trim(),
       danger_level: dangerLevel,
       permission_mode: permissionModeLocal,
     });
+    // 工作区智能体共享同一授权策略，避免两处状态不一致
     setPermissionMode(permissionModeLocal);
+    useWorkspaceStore.getState().setPermissionMode(permissionModeLocal);
     toggleSettingsModal(false);
   };
 
@@ -568,11 +552,11 @@ export const SettingsModal: React.FC = () => {
                       color: currentTheme.ui.text,
                     }}
                   >
-                    <option value="DeepSeek">DeepSeek</option>
-                    <option value="OpenAI">OpenAI</option>
-                    <option value="Ollama">Ollama (本地私有化)</option>
-                    <option value="vLLM">vLLM (本地/云端部署)</option>
-                    <option value="Custom">自定义 (OpenAI 兼容协议)</option>
+                    {AI_PROVIDER_PRESETS.map((preset) => (
+                      <option key={preset.name} value={preset.name}>
+                        {preset.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -587,7 +571,10 @@ export const SettingsModal: React.FC = () => {
                     type="text"
                     value={selectedProvider.base_url}
                     onChange={(e) => handleUpdateField('base_url', e.target.value)}
-                    placeholder="https://api.deepseek.com/v1"
+                    placeholder={
+                      findPreset(selectedProvider.provider)?.baseUrl ||
+                      'https://your-gateway.example.com/v1'
+                    }
                     className="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none"
                     style={{
                       backgroundColor: currentTheme.ui.inputBg,
@@ -629,7 +616,10 @@ export const SettingsModal: React.FC = () => {
                     type="text"
                     value={selectedProvider.model}
                     onChange={(e) => handleUpdateField('model', e.target.value)}
-                    placeholder="deepseek-chat 或 deepseek-reasoner"
+                    placeholder={
+                      findPreset(selectedProvider.provider)?.modelHint ||
+                      '填写服务端支持的模型名称'
+                    }
                     className="w-full border rounded px-2.5 py-1.5 font-mono text-xs focus:outline-none"
                     style={{
                       backgroundColor: currentTheme.ui.inputBg,
@@ -753,8 +743,8 @@ export const SettingsModal: React.FC = () => {
           </button>
           <button
             onClick={handleSave}
-            className="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer text-black hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: '#23d18b', color: '#064e3b' }}
+            className="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer hover:opacity-90 transition-opacity"
+            style={getPrimaryButtonStyle(currentTheme)}
           >
             保存配置
           </button>

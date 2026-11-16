@@ -4,8 +4,8 @@ const RESULT_PREVIEW_LIMIT = 320;
 const DIGEST_ITEM_LIMIT = 20;
 
 const STATUS_LABELS: Record<ToolCallItem['status'], string> = {
-  pending: '未执行',
-  executing: '未执行',
+  pending: '待执行',
+  executing: '执行中',
   success: '成功',
   failed: '失败',
   rejected: '已取消',
@@ -67,11 +67,27 @@ export function buildToolExecutionDigest(toolCalls: ToolCallItem[]): string {
 
 /**
  * 判断文本中是否已包含结构化结论报告，避免重复请求结论
+ * 兼容模型可能采用的不同标题措辞与字段名，不过度收紧导致误判为「无结论」
  */
 export function hasConclusionReport(content: string): boolean {
   if (!content) return false;
-  // 兼容不同标题层级，或直接给出结构化字段名的情况
-  return /#{1,6}\s*(最终)?执行结论/.test(content) || /目标达成情况\s*[:：]/.test(content);
+
+  // 标题形态：允许任意层级、可选修饰词
+  const headingPattern =
+    /#{1,6}\s*[^\n]{0,8}(执行结论|最终结论|运维结论|执行报告|任务总结|执行总结|结论|总结)/;
+  if (headingPattern.test(content)) return true;
+
+  // 字段形态：即使未使用标题，只要给出达成情况等结构化字段也视为已闭环
+  const fieldPattern = /(目标达成情况|总体达成情况|整体达成情况|达成情况|最终状态|任务状态)\s*[:：]/;
+  return fieldPattern.test(content);
+}
+
+/** 在正文末尾安全追加兜底结论，已存在结论时不重复追加 */
+export function appendConclusionSafely(content: string, conclusion: string): string {
+  const trimmed = (content || '').trim();
+  if (!trimmed) return conclusion;
+  if (hasConclusionReport(trimmed)) return trimmed;
+  return `${trimmed}\n\n${conclusion}`;
 }
 
 const ABORT_MARKERS = ['[任务已手动中止]', '[工作区任务已手动中止]'];
@@ -187,19 +203,19 @@ export function buildConclusionPrompt(
 ): string {
   const digest = buildToolExecutionDigest(toolCalls);
 
-  const common = `所有执行步骤与工具调用已完毕。请严格依据下方真实执行状态汇总，向用户输出清晰精炼的最终执行结论与分析报告:
-1. 必须以整体目标是否最终达成及各节点最终验证状态为唯一评判标准。
-2. 前置探测、分支判断、状态查询类命令返回的非零退出码，属于正常判断结果，绝不可判定为未完成或失败。
-3. 前期的报错或未就绪状态，只要已被后续步骤成功修复、启动、配置或同步，一律判定为已完成。
-4. 仅当最终状态确实异常时才判定为异常，禁止笼统使用"未完成"等模糊表述。
+  const common = `所有执行步骤与工具调用已结束。请依据下方真实执行状态，输出清晰精炼的最终结论：
+1. 以整体目标是否达成、各节点最终验证状态为唯一评判依据。
+2. 前置探测、分支判断、状态查询类命令返回的非零退出码属于正常判断结果，不应判定为失败。
+3. 前期出现的报错或未就绪状态，只要已被后续步骤成功修复、启动、配置或同步，一律判定为已完成。
+4. 仅当最终状态确实异常时才判定为异常，避免使用"未完成"等模糊表述。
 
-真实执行状态汇总:
+真实执行状态：
 ${digest}`;
 
   if (scope === 'workspace') {
     return `${common}
 
-请按以下格式输出:
+请按以下格式输出：
 ### 最终执行结论
 - 总体达成情况: [已完成 / 异常]
 - 节点状态与验证: [各主机最终检查结果、服务状态或对比差异]
@@ -208,7 +224,7 @@ ${digest}`;
 
   return `${common}
 
-请按以下格式输出:
+请按以下格式输出：
 ### 执行结论
 - 目标达成情况: [已完成 / 异常]
 - 关键状态与验证: [最终检查结果、服务状态或端口情况]
@@ -230,13 +246,22 @@ export function buildDeterministicConclusion(toolCalls: ToolCallItem[]): string 
       !toolCalls.slice(index + 1).some((later) => later.status === 'success')
   );
 
-  const verdict =
-    unresolvedFailures.length > 0 ? '异常' : success === 0 ? '已取消' : '已完成';
+  // 判定顺序：存在未闭环失败 → 异常；有成功步骤 → 已完成；全部被取消 → 已取消；否则未执行
+  let verdict: string;
+  if (unresolvedFailures.length > 0) {
+    verdict = '异常';
+  } else if (success > 0) {
+    verdict = '已完成';
+  } else if (rejected > 0) {
+    verdict = '已取消';
+  } else {
+    verdict = '未执行任何操作';
+  }
 
   const lines = [
     '### 执行结论',
     `- 目标达成情况: ${verdict}`,
-    `- 关键状态与验证: 共 ${toolCalls.length} 次调用, 成功 ${success}, 取消 ${rejected}, 未闭环失败 ${unresolvedFailures.length}`,
+    `- 关键状态与验证: 共 ${toolCalls.length} 次调用，成功 ${success}，已取消 ${rejected}，未闭环失败 ${unresolvedFailures.length}`,
   ];
 
   if (unresolvedFailures.length > 0) {
@@ -255,6 +280,6 @@ export function buildDeterministicConclusion(toolCalls: ToolCallItem[]): string 
     lines.push(`- 重点变更说明: ${changes.join('; ')}`);
   }
 
-  lines.push('- 说明: 模型未返回结论文本, 本条结论由真实执行状态汇总');
+  lines.push('- 说明: 以上结论依据真实工具执行记录汇总，未做任何推测补充');
   return lines.join('\n');
 }

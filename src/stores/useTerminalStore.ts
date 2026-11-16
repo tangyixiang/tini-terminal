@@ -7,19 +7,20 @@ import { abortAgentTask, isAgentTaskRunning } from '../lib/agent/runner';
 interface TerminalState {
   tabs: TerminalTab[];
   activeTabId: string | null;
-  latencyMs: number;
+  /** 真实探测到的连接延迟；未探测到时为 null，不使用固定假值 */
+  latencyMs: number | null;
   openLocalTab: () => string;
   openSshTab: (server: ServerRecord) => string;
   closeTab: (id: string) => void;
   setActiveTabId: (id: string) => void;
   setTabConnected: (id: string, connected: boolean) => void;
-  setLatencyMs: (ms: number) => void;
+  setLatencyMs: (ms: number | null) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
   activeTabId: null,
-  latencyMs: 12,
+  latencyMs: null,
 
   openLocalTab: () => {
     const id = 'tab-' + Math.random().toString(36).substring(2, 9);
@@ -92,7 +93,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
   },
 
-  setLatencyMs: (ms: number) => {
+  setLatencyMs: (ms: number | null) => {
     set({ latencyMs: ms });
   },
 }));

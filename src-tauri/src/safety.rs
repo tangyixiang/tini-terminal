@@ -14,6 +14,27 @@ pub struct SafetyManager {
     warning_patterns: Vec<(Regex, &'static str)>,
 }
 
+/// 危险命令拦截等级
+/// - high: 拦截全部危险与警告模式（默认）
+/// - medium: 仅拦截极度危险模式，警告模式降级为提示
+/// - low: 仅记录而不阻断，风险级别统一按 safe 返回
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SafetyLevel {
+    High,
+    Medium,
+    Low,
+}
+
+impl SafetyLevel {
+    pub fn from_str(value: &str) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "low" => SafetyLevel::Low,
+            "medium" => SafetyLevel::Medium,
+            _ => SafetyLevel::High,
+        }
+    }
+}
+
 impl SafetyManager {
     pub fn new() -> Self {
         let danger_patterns = vec![
@@ -72,27 +93,41 @@ impl SafetyManager {
         }
     }
 
-    pub fn check_command(&self, command: &str) -> SafetyCheckResult {
+    pub fn check_command_with_level(
+        &self,
+        command: &str,
+        level: SafetyLevel,
+    ) -> SafetyCheckResult {
         let trimmed = command.trim();
 
-        // 检查极度危险模式
+        // 极度危险模式：除低等级仅记录外，其余等级均强制拦截
         for (pattern, reason) in &self.danger_patterns {
             if pattern.is_match(trimmed) {
+                let blocked = level != SafetyLevel::Low;
                 return SafetyCheckResult {
-                    is_dangerous: true,
-                    risk_level: "dangerous".to_string(),
+                    is_dangerous: blocked,
+                    risk_level: if blocked { "dangerous" } else { "safe" }.to_string(),
                     command: trimmed.to_string(),
-                    message: reason.to_string(),
+                    message: if blocked {
+                        reason.to_string()
+                    } else {
+                        format!("已记录高危指令但不拦截: {}", reason)
+                    },
                 };
             }
         }
 
-        // 检查警告级别模式
+        // 警告级别模式：高等级按 warning 拦截，中低等级仅作提示
         for (pattern, reason) in &self.warning_patterns {
             if pattern.is_match(trimmed) {
                 return SafetyCheckResult {
                     is_dangerous: false,
-                    risk_level: "warning".to_string(),
+                    risk_level: if level == SafetyLevel::High {
+                        "warning"
+                    } else {
+                        "safe"
+                    }
+                    .to_string(),
                     command: trimmed.to_string(),
                     message: reason.to_string(),
                 };
@@ -105,6 +140,10 @@ impl SafetyManager {
             command: trimmed.to_string(),
             message: "命令合规".to_string(),
         }
+    }
+
+    pub fn check_command(&self, command: &str) -> SafetyCheckResult {
+        self.check_command_with_level(command, SafetyLevel::High)
     }
 }
 
@@ -147,5 +186,38 @@ mod tests {
         let res = manager.check_command("chmod -R 777 /var/www");
         assert!(!res.is_dangerous);
         assert_eq!(res.risk_level, "warning");
+    }
+
+    #[test]
+    fn test_safety_levels_take_effect() {
+        let manager = SafetyManager::new();
+
+        // 高等级：拦截危险与警告
+        let high_danger = manager.check_command_with_level("rm -rf /", SafetyLevel::High);
+        assert!(high_danger.is_dangerous);
+        let high_warn = manager.check_command_with_level("chmod -R 777 /var/www", SafetyLevel::High);
+        assert_eq!(high_warn.risk_level, "warning");
+
+        // 中等级：警告降级为安全，危险仍拦截
+        let medium_warn =
+            manager.check_command_with_level("chmod -R 777 /var/www", SafetyLevel::Medium);
+        assert_eq!(medium_warn.risk_level, "safe");
+        let medium_danger = manager.check_command_with_level("mkfs.ext4 /dev/sda1", SafetyLevel::Medium);
+        assert!(medium_danger.is_dangerous);
+
+        // 低等级：仅记录，不拦截
+        let low_danger = manager.check_command_with_level("rm -rf /", SafetyLevel::Low);
+        assert!(!low_danger.is_dangerous);
+        assert_eq!(low_danger.risk_level, "safe");
+        assert!(low_danger.message.contains("已记录"));
+    }
+
+    #[test]
+    fn test_safety_level_from_str() {
+        assert_eq!(SafetyLevel::from_str("high"), SafetyLevel::High);
+        assert_eq!(SafetyLevel::from_str("medium"), SafetyLevel::Medium);
+        assert_eq!(SafetyLevel::from_str("low"), SafetyLevel::Low);
+        assert_eq!(SafetyLevel::from_str("unknown"), SafetyLevel::High);
+        assert_eq!(SafetyLevel::from_str(""), SafetyLevel::High);
     }
 }

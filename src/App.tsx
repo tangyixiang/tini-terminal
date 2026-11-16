@@ -13,7 +13,7 @@ import { useServerStore } from './stores/useServerStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { invoke } from '@tauri-apps/api/core';
-import { BUILTIN_THEMES, PRIMARY_BUTTON_STYLE } from './types/theme';
+import { BUILTIN_THEMES, getPrimaryButtonStyle } from './types/theme';
 import { Terminal, Plus } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -188,7 +188,7 @@ export const App: React.FC = () => {
                     <button
                       onClick={() => toggleServerModal(true)}
                       className="px-3 py-1.5 rounded text-xs cursor-pointer font-semibold transition-opacity hover:opacity-90"
-                      style={PRIMARY_BUTTON_STYLE}
+                      style={getPrimaryButtonStyle(currentTheme)}
                     >
                       添加远程主机
                     </button>

@@ -4,7 +4,21 @@ import { useServerStore } from '../../stores/useServerStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { WORKSPACE_AGENT_TOOLS, checkSafety, executeWorkspaceToolCall } from './workspaceTools';
 import { isReadOnlyCommand, truncateToolResult } from './commandUtils';
+import { resolveAiRuntime, validateAiRuntime } from '../aiProviders';
 import {
+  CONCLUSION_RETRY_TIMES,
+  HISTORY_MESSAGE_LIMIT,
+  MAX_AGENT_LOOPS,
+  STREAM_FLUSH_INTERVAL_MS,
+} from './constants';
+import {
+  describeFinishReason,
+  looksLikeNonSseJson,
+  parseNonSseBody,
+  parseSseDataLine,
+} from './streamParse';
+import {
+  appendConclusionSafely,
   buildConclusionMessages,
   buildConclusionPrompt,
   buildDeterministicConclusion,
@@ -17,12 +31,6 @@ import type { ToolCallItem } from '../../types';
 
 const abortControllers: Record<string, AbortController> = {};
 const currentRequestIds: Record<string, string> = {};
-
-/** 流式渲染节流间隔，兼顾流畅度与渲染开销 */
-const STREAM_FLUSH_INTERVAL_MS = 50;
-
-/** 单次任务最大工具调用轮次 */
-const MAX_AGENT_LOOPS = 20;
 
 interface StreamEventPayload {
   event_type: 'chunk' | 'error' | 'done';
@@ -43,11 +51,19 @@ async function streamChatCompletion(
 
     return new Promise<void>((resolve, reject) => {
       const channel = new Channel<StreamEventPayload>();
+      // 保证 Promise 只被结算一次，避免解析异常后再被 done 事件覆盖
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', abortHandler);
+        if (wsId) delete currentRequestIds[wsId];
+        fn();
+      };
 
       const abortHandler = () => {
         invoke('abort_ai_chat', { requestId }).catch(() => {});
-        if (wsId) delete currentRequestIds[wsId];
-        resolve();
+        settle(resolve);
       };
 
       if (signal.aborted) {
@@ -57,20 +73,23 @@ async function streamChatCompletion(
       signal.addEventListener('abort', abortHandler, { once: true });
 
       channel.onmessage = (event) => {
+        if (settled) return;
         if (signal.aborted) {
-          resolve();
+          settle(resolve);
           return;
         }
         if (event.event_type === 'chunk' && event.data) {
-          onChunk(event.data);
+          // 解析阶段抛出的错误必须转成 Promise 拒绝，否则上层会永久挂起
+          try {
+            onChunk(event.data);
+          } catch (err: any) {
+            invoke('abort_ai_chat', { requestId }).catch(() => {});
+            settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+          }
         } else if (event.event_type === 'error') {
-          signal.removeEventListener('abort', abortHandler);
-          if (wsId) delete currentRequestIds[wsId];
-          reject(new Error(event.data || '大模型网络请求异常'));
+          settle(() => reject(new Error(event.data || '大模型网络请求异常')));
         } else if (event.event_type === 'done') {
-          signal.removeEventListener('abort', abortHandler);
-          if (wsId) delete currentRequestIds[wsId];
-          resolve();
+          settle(resolve);
         }
       };
 
@@ -83,9 +102,7 @@ async function streamChatCompletion(
         },
         channel,
       }).catch((err) => {
-        signal.removeEventListener('abort', abortHandler);
-        if (wsId) delete currentRequestIds[wsId];
-        reject(new Error(err?.toString() || '启动大模型网络请求失败'));
+        settle(() => reject(new Error(err?.toString() || '启动大模型网络请求失败')));
       });
     });
   } else {
@@ -198,7 +215,7 @@ export async function runWorkspaceAgentTask(
 
   // 3. 获取历史消息
   const agentState = wsStore.getAgentState(wsId);
-  const historyMessages = agentState.messages.slice(-20);
+  const historyMessages = agentState.messages.slice(-HISTORY_MESSAGE_LIMIT);
 
   // 4. 追加用户消息
   const userMsgId = 'msg-' + Date.now();
@@ -215,44 +232,43 @@ export async function runWorkspaceAgentTask(
   const hostDescriptions = visibleServers
     .map(
       (s) =>
-        `- ${s.name} (唯一标识: "${s.id}" 或 "${s.name}", 地址: ${s.host}:${s.port}, 用户: ${s.username}${s.tags ? `, 标签: ${s.tags}` : ''})`
+        `- ${s.name}（标识: "${s.id}" 或 "${s.name}"，地址: ${s.host}:${s.port}，用户: ${s.username}${s.tags ? `，标签: ${s.tags}` : ''}）`
     )
     .join('\n');
 
-  const systemPrompt = `你是一个具备多机协同编排与自主执行能力的专业 Linux 运维工作区智能体（Workspace Agent）。
+  const systemPrompt = `你是一名专业的 Linux 运维工作区智能体，具备多机协同编排与自主执行能力。
 
-你当前所处工作区包含以下可操作的集群主机节点:
+当前工作区可操作的主机节点：
 ${hostDescriptions}
 
-核心能力与调用纪律:
-1. 多机自主协同:
-   - 你具有多台主机的全局视野，能够根据用户意图，自主规划步骤、访问不同的主机。
-   - 工具调用中的 host_id 参数支持传入主机 ID 或主机名称（如 ${visibleServers.map((s) => `"${s.name}"`).join(' / ')}）。
-   - 可用工具包括:
-     * host_exec(host_id, command): 在指定主机上执行 shell 命令
-     * host_file_read(host_id, path): 读取指定主机文件内容
-     * host_file_write(host_id, path, content): 在指定主机写入文件
-     * host_system_info(host_id): 获取指定主机的基础系统信息
-     * host_transfer(src_host_id, src_path, dst_host_id, dst_path): 跨主机传输同步文件
-2. 真实执行与闭环验证:
-   - 严禁在回复中凭空编造执行结果，所有查询、探测、文件操作必须真实调用工具。
-   - 涉及跨机同步或服务部署时，部署后必须主动在目标主机调用 host_exec 验证配置语法与服务状态。
-3. 极致简洁专业:
-   - 回复直接提炼关键事实与执行报告，严禁冗长过程性废话。
-   - 严禁输出任何 Emoji 表情符号。
-4. 必须输出最终结论报告（结论闭环）:
-   - 在所有多机工具调用执行完毕后，必须在最终回复文本中向用户输出多机协同的最终结论与分析报告。
-   - 格式建议：
+执行准则：
+1. 多机协同
+   - 你拥有多台主机的全局视野，可按用户意图自主规划步骤并访问不同主机。
+   - host_id 参数支持传入主机 ID 或主机名称（如 ${visibleServers.map((s) => `"${s.name}"`).join(' / ')}）。
+   - 可用工具：
+     * host_exec(host_id, command)：在指定主机执行 shell 命令
+     * host_file_read(host_id, path)：读取指定主机文件内容
+     * host_file_write(host_id, path, content)：在指定主机写入文件
+     * host_system_info(host_id)：获取指定主机的基础系统信息
+     * host_transfer(src_host_id, src_path, dst_host_id, dst_path)：跨主机传输同步文件
+2. 真实执行与闭环验证
+   - 不编造执行结果，所有查询、探测与文件操作必须真实调用工具。
+   - 跨机同步或服务部署后，必须在目标主机调用 host_exec 验证配置与服务状态。
+3. 表达风格
+   - 直接给出关键事实与执行报告，省略过程性叙述。
+   - 不使用 Emoji。
+4. 必须给出最终结论
+   - 所有工具调用结束后，必须在回复正文中给出多机协同结论，格式如下：
 ### 最终执行结论
 - 总体达成情况: [已完成 / 异常]
-- 节点状态与验证: [提炼各主机执行结果、服务状态或对比差异]
-- 重点变更与同步: [若有跨机配置同步、脚本下发请简要列出]
-   - 明确提炼各主机的执行状态、配置对比差异或服务状态。严禁仅调用工具而不输出任何总结结论，严禁静默空答！
-5. 整体目标与最终验证驱动，严禁误报未完成:
-   - 多机协同运维以最终达成的集群业务目标与各节点最终验证状态为唯一评判准绳。
-   - 凡是在执行过程中作为前置探测、环境排查、分支条件判断的命令（如 grep、test、[ ]、pidof、which、diff、systemctl is-active 等返回非零退出码），绝不属于操作失败。
-   - 凡是前期报错或状态未就绪，但已被后续步骤成功修复、重新启动、正确配置或成功同步的，均属任务圆满完成，严禁将中间排查或自愈过程误判为"任务未完成"或"失败"。
-   - 判定为未完成或异常时，必须明确指出是哪一台主机的哪一项最终验证结果不达标，禁止使用笼统模糊的表述。`;
+- 节点状态与验证: [各主机执行结果、服务状态或对比差异]
+- 重点变更与同步: [跨机配置同步或脚本下发]
+   - 不允许只调用工具而无任何总结，也不允许空回复。
+5. 以最终状态判定成败
+   - 判断依据是集群业务目标与各节点最终验证状态，而非中间过程。
+   - 前置探测、条件判断类命令（grep、test、[ ]、pidof、which、diff、systemctl is-active 等）返回非零退出码属于正常结果，不代表失败。
+   - 中间出现的报错若已被后续步骤修复或成功同步，应判定为已完成；不要因为过程曲折就写成"任务未完成"或"失败"。
+   - 确实异常时，需指明是哪台主机的哪项最终验证未达标，避免笼统表述。`;
 
   const conversation: any[] = [
     { role: 'system', content: systemPrompt },
@@ -300,17 +316,10 @@ ${hostDescriptions}
   // 追加当前提示词
   conversation.push({ role: 'user', content: userPrompt });
 
-  const aiSettings = settingsStore.settings;
-  const activeProvider =
-    aiSettings.providers?.find((p) => p.id === aiSettings.active_provider_id) ||
-    aiSettings.providers?.[0];
-  const baseUrl = (
-    activeProvider?.base_url ||
-    aiSettings.ai_base_url ||
-    'https://api.deepseek.com/v1'
-  ).replace(/\/+$/, '');
-  const apiKey = activeProvider ? activeProvider.api_key : aiSettings.ai_api_key;
-  const model = activeProvider?.model || aiSettings.ai_model || 'deepseek-chat';
+  const runtime = resolveAiRuntime(settingsStore.settings);
+  const baseUrl = runtime.baseUrl;
+  const apiKey = runtime.apiKey;
+  const model = runtime.model;
 
   // 创建 Assistant 消息占位
   const assistantMsgId = 'msg-' + (Date.now() + 1);
@@ -323,6 +332,15 @@ ${hostDescriptions}
     timestamp: Date.now(),
     toolCalls: toolCallItems,
   });
+
+  // 模型未配置完整时直接给出明确配置提示，不再用厂商默认值静默兜底
+  const configError = validateAiRuntime(runtime);
+  if (configError) {
+    wsStore.updateLastMessage(wsId, (m) => ({ ...m, content: configError }));
+    wsStore.setIsThinking(wsId, false);
+    delete abortControllers[wsId];
+    return;
+  }
 
   const maxLoops = MAX_AGENT_LOOPS;
   let loopCount = 0;
@@ -344,6 +362,8 @@ ${hostDescriptions}
       let loopContent = '';
       const toolCallsMap: Map<number, { id: string; name: string; args: string }> = new Map();
       let thinkState: { inThink: boolean; pending: string } = { inThink: false, pending: '' };
+      let lastFinishReason: string | undefined;
+      let sawAnyChunk = false;
       const loopStartTime = Date.now();
       let thinkingDuration: number | undefined = undefined;
       // 流式刷新节流状态
@@ -360,47 +380,45 @@ ${hostDescriptions}
         let updated = false;
 
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const jsonStr = trimmed.replace(/^data:\s*/, '');
-          if (jsonStr === '[DONE]') continue;
+          const parsedLine = parseSseDataLine(line);
+          if (!parsedLine) continue;
 
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const delta = parsed.choices?.[0]?.delta;
-            if (!delta) continue;
+          if (parsedLine.error) {
+            throw new Error(parsedLine.error);
+          }
 
-            // 深度思考提取
-            if (delta.reasoning_content) {
-              loopThinking += delta.reasoning_content;
-              updated = true;
-            } else if (delta.content) {
-              const parsed = parseThinkTag(delta.content, thinkState);
-              thinkState = parsed.state;
-              if (parsed.thinking) {
-                loopThinking += parsed.thinking;
-                thinkingDuration = Date.now() - loopStartTime;
-              }
-              if (parsed.content) {
-                loopContent += parsed.content;
-              }
-              updated = true;
+          if (parsedLine.reasoning) {
+            loopThinking += parsedLine.reasoning;
+            updated = true;
+          }
+
+          if (parsedLine.content) {
+            const parsedThink = parseThinkTag(parsedLine.content, thinkState);
+            thinkState = parsedThink.state;
+            if (parsedThink.thinking) {
+              loopThinking += parsedThink.thinking;
+              thinkingDuration = Date.now() - loopStartTime;
             }
-
-            // Function calling 工具捕获
-            if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-              for (const tc of delta.tool_calls) {
-                const index = tc.index ?? 0;
-                const existing = toolCallsMap.get(index) || { id: '', name: '', args: '' };
-                if (tc.id) existing.id = tc.id;
-                if (tc.function?.name) existing.name += tc.function.name;
-                if (tc.function?.arguments) existing.args += tc.function.arguments;
-                toolCallsMap.set(index, existing);
-              }
-              updated = true;
+            if (parsedThink.content) {
+              loopContent += parsedThink.content;
             }
-          } catch {
-            // 忽略异常
+            updated = true;
+          }
+
+          if (parsedLine.toolCalls) {
+            for (const tc of parsedLine.toolCalls) {
+              const index = tc.index ?? 0;
+              const existing = toolCallsMap.get(index) || { id: '', name: '', args: '' };
+              if (tc.id) existing.id = tc.id;
+              if (tc.name) existing.name += tc.name;
+              if (tc.arguments) existing.args += tc.arguments;
+              toolCallsMap.set(index, existing);
+            }
+            updated = true;
+          }
+
+          if (parsedLine.finishReason) {
+            lastFinishReason = parsedLine.finishReason;
           }
         }
 
@@ -445,14 +463,49 @@ ${hostDescriptions}
         signal,
         (chunkText) => {
           buffer += chunkText;
+          // 兼容网关忽略 stream 参数、直接返回完整 JSON 的情形
+          if (!sawAnyChunk && looksLikeNonSseJson(buffer)) {
+            return;
+          }
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
+          if (lines.some((line) => line.trim().startsWith('data:'))) {
+            sawAnyChunk = true;
+          }
           handleLines(lines);
         },
         wsId
       );
 
-      if (buffer.trim()) {
+      // 非 SSE 完整响应：一次性解析，避免静默丢弃
+      if (!sawAnyChunk && buffer.trim()) {
+        const wholeBody = parseNonSseBody(buffer);
+        buffer = '';
+        if (wholeBody?.error) {
+          throw new Error(wholeBody.error);
+        }
+        if (wholeBody) {
+          if (wholeBody.reasoning) loopThinking += wholeBody.reasoning;
+          if (wholeBody.content) {
+            const parsedThink = parseThinkTag(wholeBody.content, thinkState);
+            thinkState = parsedThink.state;
+            loopThinking += parsedThink.thinking;
+            loopContent += parsedThink.content;
+          }
+          if (wholeBody.finishReason) lastFinishReason = wholeBody.finishReason;
+        }
+        const mergedThinking = accumulatedThinking
+          ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
+          : loopThinking;
+        const mergedContent = accumulatedContent
+          ? `${accumulatedContent}\n\n${loopContent}`.trim()
+          : loopContent;
+        wsStore.updateLastMessage(wsId, (m) => ({
+          ...m,
+          thinking: mergedThinking || m.thinking,
+          content: mergedContent,
+        }));
+      } else if (buffer.trim()) {
         handleLines([buffer.trim()]);
         buffer = '';
       }
@@ -493,6 +546,66 @@ ${hostDescriptions}
           },
         }));
 
+      // 输出被截断/被拦截必须明示，避免用户误以为任务正常结束
+      const finishNote = describeFinishReason(lastFinishReason);
+      if (finishNote) {
+        accumulatedContent = accumulatedContent.trim()
+          ? `${accumulatedContent.trim()}\n\n${finishNote}`
+          : finishNote;
+        wsStore.updateLastMessage(wsId, (m) => ({
+          ...m,
+          content: accumulatedContent,
+        }));
+      }
+
+      // 结论阶段的流式累积：结果同样实时呈现，异常不再被静默吞掉
+      const collectConclusionLine = (
+        lines: string[],
+        onFinish: (reason: string) => void
+      ): string | null => {
+        let latestFinish: string | null = null;
+        let updated = false;
+
+        for (const line of lines) {
+          const parsedLine = parseSseDataLine(line);
+          if (!parsedLine) continue;
+          if (parsedLine.error) {
+            throw new Error(parsedLine.error);
+          }
+          if (parsedLine.reasoning) {
+            loopThinking += parsedLine.reasoning;
+            updated = true;
+          }
+          if (parsedLine.content) {
+            const parsedThink = parseThinkTag(parsedLine.content, thinkState);
+            thinkState = parsedThink.state;
+            loopThinking += parsedThink.thinking;
+            loopContent += parsedThink.content;
+            updated = true;
+          }
+          if (parsedLine.finishReason) {
+            latestFinish = parsedLine.finishReason;
+            onFinish(parsedLine.finishReason);
+          }
+        }
+
+        if (updated) {
+          const mergedThinking = accumulatedThinking
+            ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
+            : loopThinking;
+          const mergedContent = accumulatedContent
+            ? `${accumulatedContent}\n\n${loopContent}`.trim()
+            : loopContent;
+          wsStore.updateLastMessage(wsId, (m) => ({
+            ...m,
+            thinking: mergedThinking || m.thinking,
+            content: mergedContent,
+          }));
+        }
+
+        return latestFinish;
+      };
+
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
         // 已执行过工具但尚未产出结构化结论时，补齐上下文并显式请求模型输出最终结论报告
@@ -503,36 +616,60 @@ ${hostDescriptions}
         ) {
           // 结论请求基于独立消息序列构造，不改动原对话上下文
           const conclusionPrompt = buildConclusionPrompt('workspace', toolCallItems);
-          let summaryBuffer = '';
           loopThinking = '';
           loopContent = '';
           thinkState = { inThink: false, pending: '' };
-          try {
-            await streamChatCompletion(
-              baseUrl,
-              apiKey || '',
-              {
-                model,
-                messages: buildConclusionMessages(conversation, conclusionPrompt),
-                temperature: 0.2,
-                stream: true,
-              },
-              signal,
-              (chunkText) => {
-                summaryBuffer += chunkText;
-                const lines = summaryBuffer.split('\n');
-                summaryBuffer = lines.pop() || '';
-                handleLines(lines);
-              },
-              wsId
-            );
-          } catch {
-            // 结论请求异常交由下方兜底逻辑保证必出结论
+
+          for (let attempt = 0; attempt <= CONCLUSION_RETRY_TIMES; attempt++) {
+            let summaryBuffer = '';
+            let summaryFinishReason: string | undefined;
+            try {
+              await streamChatCompletion(
+                baseUrl,
+                apiKey || '',
+                {
+                  model,
+                  messages: buildConclusionMessages(conversation, conclusionPrompt),
+                  temperature: 0.2,
+                  stream: true,
+                },
+                signal,
+                (chunkText) => {
+                  summaryBuffer += chunkText;
+                  const lines = summaryBuffer.split('\n');
+                  summaryBuffer = lines.pop() || '';
+                  const finish = collectConclusionLine(lines, (reason) => {
+                    summaryFinishReason = reason;
+                  });
+                  if (finish) summaryFinishReason = finish;
+                },
+                wsId
+              );
+              if (summaryBuffer.trim()) {
+                const finish = collectConclusionLine([summaryBuffer.trim()], (reason) => {
+                  summaryFinishReason = reason;
+                });
+                if (finish) summaryFinishReason = finish;
+              }
+              flushPending();
+            } catch (err: any) {
+              if (signal.aborted) break;
+              // 最后一次重试仍失败才交由确定性兜底，避免静默无结论
+              if (attempt === CONCLUSION_RETRY_TIMES) {
+                loopContent += `\n\n> 结论请求失败: ${err?.message || err}`;
+              }
+              continue;
+            }
+
+            if (signal.aborted) break;
+
+            const retryNote = describeFinishReason(summaryFinishReason);
+            if (retryNote) {
+              loopContent += `\n\n${retryNote}`;
+            }
+            if (loopContent.trim() || hasConclusionReport(loopContent)) break;
           }
-          if (summaryBuffer.trim()) {
-            handleLines([summaryBuffer.trim()]);
-          }
-          flushPending();
+
           if (loopContent.trim()) {
             accumulatedContent = accumulatedContent.trim()
               ? `${accumulatedContent.trim()}\n\n${loopContent.trim()}`
@@ -551,9 +688,7 @@ ${hostDescriptions}
           !hasFreshConclusion()
         ) {
           const fallback = buildDeterministicConclusion(toolCallItems);
-          accumulatedContent = accumulatedContent.trim()
-            ? `${accumulatedContent.trim()}\n\n${fallback}`
-            : fallback;
+          accumulatedContent = appendConclusionSafely(accumulatedContent, fallback);
           wsStore.updateLastMessage(wsId, (m) => ({
             ...m,
             content: accumulatedContent,
@@ -607,7 +742,10 @@ ${hostDescriptions}
 
         // 安全检查
         if (fnName === 'host_exec') {
-          const safety = await checkSafety(fnArgs.command || '');
+          const safety = await checkSafety(
+            fnArgs.command || '',
+            settingsStore.settings.danger_level
+          );
           toolCallItem.riskLevel = safety.risk_level;
           toolCallItem.warningMessage = safety.message;
         }
@@ -723,9 +861,7 @@ ${hostDescriptions}
     // 轮次耗尽闭环：达到最大循环仍无结构化结论时，依据真实执行状态补齐，避免静默结束
     if (!signal.aborted && toolCallItems.length > 0 && !hasFreshConclusion()) {
       const fallback = buildDeterministicConclusion(toolCallItems);
-      accumulatedContent = accumulatedContent.trim()
-        ? `${accumulatedContent.trim()}\n\n${fallback}`
-        : fallback;
+      accumulatedContent = appendConclusionSafely(accumulatedContent, fallback);
       wsStore.updateLastMessage(wsId, (m) => ({
         ...m,
         content: accumulatedContent,
@@ -751,10 +887,13 @@ ${hostDescriptions}
         toolCallItems.length > 0 && !hasFreshConclusion()
           ? buildDeterministicConclusion(toolCallItems)
           : '';
-      wsStore.updateLastMessage(wsId, (m) => ({
-        ...m,
-        content: [m.content, closure, errorNote].filter((part) => part && part.trim()).join('\n\n'),
-      }));
+      wsStore.updateLastMessage(wsId, (m) => {
+        const body = appendConclusionSafely(m.content || '', closure);
+        return {
+          ...m,
+          content: [body, errorNote].filter((part) => part && part.trim()).join('\n\n'),
+        };
+      });
     }
   } finally {
     delete abortControllers[wsId];

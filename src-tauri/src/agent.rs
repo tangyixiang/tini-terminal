@@ -41,10 +41,11 @@ pub struct AgentService {
 
 impl AgentService {
     pub fn new() -> Self {
-        // 仅限制连接与单次读取间隔，避免长文本流式输出被整体超时中断
+        // 仅限制连接与单次读取间隔：推理型模型在输出首个 token 前可能长时间静默，
+        // 因此读超时需足够宽松，避免长思考被整体中断而丢失结论
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(30))
-            .read_timeout(Duration::from_secs(180))
+            .read_timeout(Duration::from_secs(600))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -235,9 +236,17 @@ impl AgentService {
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    // 流式传输中途异常必须显式上报，避免上层误判为正常完成而丢失结论
+                    // 流式传输中断必须显式上报；区分空闲超时与其他网络错误，避免上层误判为正常完成
                     if !self.is_aborted(&req.request_id) {
-                        stream_error = Some(format!("大模型流式响应中断: {}", e));
+                        let reason = if e.is_timeout() {
+                            format!(
+                                "大模型响应超时（长时间未返回数据）: {}。请检查网络或模型服务负载后重试",
+                                e
+                            )
+                        } else {
+                            format!("大模型流式响应中断: {}", e)
+                        };
+                        stream_error = Some(reason);
                     }
                     break;
                 }

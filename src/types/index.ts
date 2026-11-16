@@ -92,6 +92,9 @@ export interface SafetyCheckResult {
   message: string;
 }
 
+/** 危险命令拦截等级 */
+export type SafetyLevel = 'high' | 'medium' | 'low';
+
 export interface Workspace {
   id: string;
   name: string;

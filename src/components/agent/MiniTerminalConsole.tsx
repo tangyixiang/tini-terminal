@@ -183,13 +183,16 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
     }
     if (isExecuting) {
       return (
-        <span className="text-zinc-500 flex items-center gap-1.5">
-          <span className="inline-block w-2 h-3.5 bg-emerald-400 animate-pulse" />
+        <span className="flex items-center gap-1.5" style={{ color: theme.ui.textMuted }}>
+          <span
+            className="inline-block w-2 h-3.5 animate-pulse"
+            style={{ backgroundColor: theme.ui.accent }}
+          />
           <span>正在建立执行流...</span>
         </span>
       );
     }
-    return <span className="text-zinc-600">(无输出)</span>;
+    return <span style={{ color: theme.ui.textMuted }}>(无输出)</span>;
   };
 
   return (
@@ -198,22 +201,26 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
       <div
         className="mt-2 rounded border overflow-hidden flex flex-col font-mono transition-all duration-200 select-text max-h-48"
         style={{
-          backgroundColor: '#0f1117',
-          borderColor: isExecuting ? '#23d18b' : theme.ui.border,
+          backgroundColor: theme.ui.inputBg,
+          borderColor: isExecuting ? theme.ui.accent : theme.ui.border,
         }}
       >
         {/* 顶部控制栏 */}
         <div
           className="px-2.5 py-1.5 border-b flex items-center justify-between text-xs select-none shrink-0"
           style={{
-            backgroundColor: '#161922',
+            backgroundColor: theme.ui.cardBg,
             borderColor: theme.ui.border,
             color: theme.ui.textMuted,
           }}
         >
           <div className="flex items-center gap-1.5 min-w-0 mr-2">
-            <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="text-[11px] text-zinc-400 font-semibold truncate" title={command}>
+            <Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
+            <span
+              className="text-[11px] font-semibold truncate"
+              style={{ color: theme.ui.textMuted }}
+              title={command}
+            >
               $ {command}
             </span>
           </div>
@@ -221,19 +228,22 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             {/* 状态标识 */}
             {isExecuting && (
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+              <span
+                className="flex items-center gap-1 text-[11px] font-medium"
+                style={{ color: theme.ui.accent }}
+              >
                 <Loader2 className="w-3 h-3 animate-spin" />
                 <span>运行中</span>
               </span>
             )}
             {!isExecuting && toolCall.status === 'success' && (
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+              <span className="flex items-center gap-1 text-[11px] text-emerald-500 font-medium">
                 <CheckCircle2 className="w-3 h-3" />
-                <span>0</span>
+                <span>完成</span>
               </span>
             )}
             {!isExecuting && toolCall.status === 'failed' && (
-              <span className="flex items-center gap-1 text-[11px] text-red-400 font-medium">
+              <span className="flex items-center gap-1 text-[11px] text-red-500 font-medium">
                 <AlertTriangle className="w-3 h-3" />
                 <span>错误</span>
               </span>
@@ -241,7 +251,10 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
 
             {/* 执行耗时 */}
             {toolCall.durationMs !== undefined && toolCall.durationMs > 0 && (
-              <span className="text-[10px] text-zinc-500 font-mono">
+              <span
+                className="text-[10px] font-mono"
+                style={{ color: theme.ui.textMuted }}
+              >
                 {toolCall.durationMs < 1000
                   ? `${toolCall.durationMs}ms`
                   : `${(toolCall.durationMs / 1000).toFixed(1)}s`}
@@ -252,7 +265,8 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
             <button
               type="button"
               onClick={() => setIsModalOpen(true)}
-              className="p-1 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="p-1 rounded cursor-pointer hover:opacity-80 transition-colors"
+              style={{ color: theme.ui.textMuted }}
               title="弹出窗口放大查看"
             >
               <Maximize2 className="w-3 h-3" />
@@ -262,11 +276,12 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
             <button
               type="button"
               onClick={handleCopy}
-              className="p-1 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="p-1 rounded cursor-pointer hover:opacity-80 transition-colors"
+              style={{ color: theme.ui.textMuted }}
               title={isCopied ? '已复制' : '复制输出'}
             >
               {isCopied ? (
-                <Check className="w-3 h-3 text-emerald-400" />
+                <Check className="w-3 h-3 text-emerald-500" />
               ) : (
                 <Copy className="w-3 h-3" />
               )}
@@ -281,7 +296,7 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
           className="p-2 overflow-y-auto whitespace-pre-wrap break-all flex-1 font-mono leading-relaxed min-h-[56px]"
           style={{
             fontSize: `${Math.max(11, fontSize - 1)}px`,
-            color: '#e4e4e7',
+            color: theme.ui.text,
           }}
         >
           {renderContent()}
@@ -296,18 +311,28 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
             onClick={() => setIsModalOpen(false)}
           >
             <div
-              className="w-full max-w-5xl h-[80vh] rounded-xl border border-zinc-700/80 shadow-2xl flex flex-col overflow-hidden select-text"
-              style={{ backgroundColor: '#0d0f14' }}
+              className="w-full max-w-5xl h-[80vh] rounded-xl border shadow-2xl flex flex-col overflow-hidden select-text"
+              style={{
+                backgroundColor: theme.ui.appBg,
+                borderColor: theme.ui.border,
+              }}
               onClick={(e) => e.stopPropagation()}
             >
               {/* 弹窗 Header */}
               <div
-                className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between text-xs select-none shrink-0"
-                style={{ backgroundColor: '#141720' }}
+                className="px-4 py-2.5 border-b flex items-center justify-between text-xs select-none shrink-0"
+                style={{
+                  backgroundColor: theme.ui.headerBg,
+                  borderColor: theme.ui.border,
+                }}
               >
                 <div className="flex items-center gap-2 min-w-0 mr-4">
-                  <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="text-xs font-semibold text-zinc-300 truncate" title={command}>
+                  <Terminal className="w-4 h-4 shrink-0" style={{ color: theme.ui.accent }} />
+                  <span
+                    className="text-xs font-semibold truncate"
+                    style={{ color: theme.ui.text }}
+                    title={command}
+                  >
                     $ {command}
                   </span>
                 </div>
@@ -315,26 +340,32 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
                 <div className="flex items-center gap-3 shrink-0">
                   {/* 状态指示 */}
                   {isExecuting && (
-                    <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                    <span
+                      className="flex items-center gap-1.5 text-xs font-medium"
+                      style={{ color: theme.ui.accent }}
+                    >
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       <span>运行中</span>
                     </span>
                   )}
                   {!isExecuting && toolCall.status === 'success' && (
-                    <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                    <span className="flex items-center gap-1.5 text-xs text-emerald-500 font-medium">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>0</span>
+                      <span>完成</span>
                     </span>
                   )}
                   {!isExecuting && toolCall.status === 'failed' && (
-                    <span className="flex items-center gap-1.5 text-xs text-red-400 font-medium">
+                    <span className="flex items-center gap-1.5 text-xs text-red-500 font-medium">
                       <AlertTriangle className="w-3.5 h-3.5" />
                       <span>错误</span>
                     </span>
                   )}
 
                   {toolCall.durationMs !== undefined && toolCall.durationMs > 0 && (
-                    <span className="text-xs text-zinc-400 font-mono">
+                    <span
+                      className="text-xs font-mono"
+                      style={{ color: theme.ui.textMuted }}
+                    >
                       {toolCall.durationMs < 1000
                         ? `${toolCall.durationMs}ms`
                         : `${(toolCall.durationMs / 1000).toFixed(1)}s`}
@@ -345,13 +376,14 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
                   <button
                     type="button"
                     onClick={handleCopy}
-                    className="p-1.5 rounded cursor-pointer hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors flex items-center gap-1 text-xs"
+                    className="p-1.5 rounded cursor-pointer hover:opacity-80 transition-colors flex items-center gap-1 text-xs"
+                    style={{ color: theme.ui.text }}
                     title={isCopied ? '已复制' : '复制输出'}
                   >
                     {isCopied ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span className="text-emerald-400">已复制</span>
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                        <span className="text-emerald-500">已复制</span>
                       </>
                     ) : (
                       <>
@@ -365,7 +397,8 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="p-1.5 rounded cursor-pointer hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors flex items-center gap-1 text-xs"
+                    className="p-1.5 rounded cursor-pointer hover:opacity-80 transition-colors flex items-center gap-1 text-xs"
+                    style={{ color: theme.ui.text }}
                     title="缩小还原"
                   >
                     <Minimize2 className="w-3.5 h-3.5" />
@@ -376,7 +409,8 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="p-1.5 rounded cursor-pointer hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+                    className="p-1.5 rounded cursor-pointer hover:opacity-80 transition-colors"
+                    style={{ color: theme.ui.textMuted }}
                     title="关闭"
                   >
                     <X className="w-4 h-4" />
@@ -391,8 +425,8 @@ export const MiniTerminalConsole: React.FC<MiniTerminalConsoleProps> = ({
                 className="p-4 overflow-y-auto whitespace-pre-wrap break-all flex-1 font-mono leading-relaxed"
                 style={{
                   fontSize: '13px',
-                  color: '#f4f4f5',
-                  backgroundColor: '#0a0c10',
+                  color: theme.ui.text,
+                  backgroundColor: theme.ui.terminalBg,
                 }}
               >
                 {renderContent()}

@@ -32,23 +32,14 @@ impl TaskManager {
         let all_servers = self.storage.list_servers().map_err(|e| e.to_string())?;
 
         let server = if host_id == "local" || host_id == "localhost" {
+            // 仅使用真实登记的本机主机，不再伪造默认凭证的虚拟记录
             all_servers
                 .into_iter()
                 .find(|s| s.host == "localhost" || s.host == "127.0.0.1")
-                .unwrap_or_else(|| ServerRecord {
-                    id: "local".to_string(),
-                    name: "本地终端".to_string(),
-                    host: "127.0.0.1".to_string(),
-                    port: 22,
-                    username: "local".to_string(),
-                    auth_type: "password".to_string(),
-                    credential: None,
-                    passphrase: None,
-                    group_name: None,
-                    tags: None,
-                    jump_host_id: None,
-                    created_at: 0,
-                })
+                .ok_or_else(|| {
+                    "未配置本机主机：请先在主机列表中添加 host 为 localhost 或 127.0.0.1 的条目"
+                        .to_string()
+                })?
         } else {
             all_servers
                 .into_iter()

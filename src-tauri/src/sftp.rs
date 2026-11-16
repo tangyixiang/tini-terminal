@@ -52,10 +52,11 @@ impl SftpManager {
 
             let target_path = if remote_path.is_empty() || remote_path == "." || remote_path == "~" {
                 sftp.realpath(Path::new("."))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                    .map_err(|e| format!("无法解析当前用户根目录: {}", e))?
             } else {
+                // 不做静默回退，避免把错误路径当成根目录导致误操作
                 sftp.realpath(Path::new(remote_path))
-                    .unwrap_or_else(|_| std::path::PathBuf::from(remote_path))
+                    .map_err(|e| format!("无法解析目标目录 {}: {}", remote_path, e))?
             };
 
             let current_dir = target_path.to_string_lossy().to_string();

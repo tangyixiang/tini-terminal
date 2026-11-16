@@ -2,7 +2,52 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AiSettings, AiProviderConfig, PermissionMode, AppPrimaryMode } from '../types';
 import { BUILTIN_THEMES, type ThemeConfig, type ThemeId } from '../types/theme';
+import { createDefaultProviderConfig } from '../lib/aiProviders';
 import { useAgentStore } from './useAgentStore';
+import { useWorkspaceStore } from './useWorkspaceStore';
+
+/** 界面状态记忆键（保留旧键兼容读取，避免升级后丢失用户偏好） */
+const STORAGE_KEYS = {
+  aiPanelOpen: 'tini_terminal_ai_panel_open',
+  primaryMode: 'tini_terminal_primary_mode',
+  sftpOpen: 'tini_terminal_sftp_open',
+  sidebarOpen: 'tini_terminal_sidebar_open',
+  sidebarWidth: 'tini_terminal_sidebar_width',
+  aiWidth: 'tini_terminal_ai_width',
+  fontSize: 'tini_terminal_font_size',
+  settings: 'tini_terminal_settings',
+  theme: 'tini_terminal_theme',
+} as const;
+
+const LEGACY_KEYS: Record<string, string> = {
+  aiPanelOpen: 'ai_terminal_ai_panel_open',
+  primaryMode: 'ai_terminal_primary_mode',
+  sftpOpen: 'ai_terminal_sftp_open',
+  sidebarOpen: 'ai_terminal_sidebar_open',
+  sidebarWidth: 'ai_terminal_sidebar_width',
+  aiWidth: 'ai_terminal_ai_width',
+  fontSize: 'ai_terminal_font_size',
+  settings: 'ai_terminal_settings',
+  theme: 'ai_terminal_theme',
+};
+
+function readStored(key: keyof typeof STORAGE_KEYS): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  const next = localStorage.getItem(STORAGE_KEYS[key]);
+  if (next !== null) return next;
+  return localStorage.getItem(LEGACY_KEYS[key] ?? '');
+}
+
+function writeStored(key: keyof typeof STORAGE_KEYS, value: string): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(STORAGE_KEYS[key], value);
+}
+
+function readStoredBoolean(key: keyof typeof STORAGE_KEYS, fallback: boolean): boolean {
+  const raw = readStored(key);
+  if (raw === null) return fallback;
+  return raw === 'true';
+}
 
 interface SettingsState {
   settings: AiSettings;
@@ -33,14 +78,7 @@ interface SettingsState {
   setTerminalFontSize: (size: number) => void;
 }
 
-const defaultProvider: AiProviderConfig = {
-  id: 'default-provider',
-  name: 'DeepSeek 官方',
-  provider: 'DeepSeek',
-  base_url: 'https://api.deepseek.com/v1',
-  api_key: '',
-  model: 'deepseek-chat',
-};
+const defaultProvider: AiProviderConfig = createDefaultProviderConfig();
 
 const defaultSettings: AiSettings = {
   providers: [defaultProvider],
@@ -56,18 +94,21 @@ const defaultSettings: AiSettings = {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: defaultSettings,
   themeId: 'aliyun',
-  primaryMode: 'terminal',
+  primaryMode: (readStored('primaryMode') as AppPrimaryMode) || 'terminal',
   isSettingsModalOpen: false,
   isServerModalOpen: false,
-  isSftpDrawerOpen: false,
-  isAiPanelOpen: true,
+  isSftpDrawerOpen: readStoredBoolean('sftpOpen', false),
+  isAiPanelOpen: readStoredBoolean('aiPanelOpen', true),
   isServerSidebarOpen: true,
   sidebarWidth: 240,
   aiPanelWidth: 360,
   terminalFontSize: 14,
   editingServerId: null,
 
-  setPrimaryMode: (mode: AppPrimaryMode) => set({ primaryMode: mode }),
+  setPrimaryMode: (mode: AppPrimaryMode) => {
+    set({ primaryMode: mode });
+    writeStored('primaryMode', mode);
+  },
 
   getActiveProviderConfig: () => {
     const { settings } = get();
@@ -79,10 +120,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   fetchSettings: async () => {
     try {
-      const savedSidebarOpen = localStorage.getItem('tini_terminal_sidebar_open') ?? localStorage.getItem('ai_terminal_sidebar_open');
-      const savedSidebarWidth = localStorage.getItem('tini_terminal_sidebar_width') ?? localStorage.getItem('ai_terminal_sidebar_width');
-      const savedAiWidth = localStorage.getItem('tini_terminal_ai_width') ?? localStorage.getItem('ai_terminal_ai_width');
-      const savedFontSize = localStorage.getItem('tini_terminal_font_size') ?? localStorage.getItem('ai_terminal_font_size');
+      // 界面状态记忆（含 AI 面板/主模式/SFTP 抽屉），保证重启后保持用户上次的布局
+      const savedAiPanelOpen = readStored('aiPanelOpen');
+      const savedPrimaryMode = readStored('primaryMode') as AppPrimaryMode | null;
+      const savedSftpOpen = readStored('sftpOpen');
+      const savedSidebarOpen = readStored('sidebarOpen');
+      const savedSidebarWidth = readStored('sidebarWidth');
+      const savedAiWidth = readStored('aiWidth');
+      const savedFontSize = readStored('fontSize');
+
+      if (savedAiPanelOpen !== null) set({ isAiPanelOpen: savedAiPanelOpen === 'true' });
+      if (savedPrimaryMode === 'terminal' || savedPrimaryMode === 'workspace') {
+        set({ primaryMode: savedPrimaryMode });
+      }
+      if (savedSftpOpen !== null) set({ isSftpDrawerOpen: savedSftpOpen === 'true' });
       if (savedSidebarOpen !== null) set({ isServerSidebarOpen: savedSidebarOpen === 'true' });
       if (savedSidebarWidth) set({ sidebarWidth: Number(savedSidebarWidth) });
       if (savedAiWidth) set({ aiPanelWidth: Number(savedAiWidth) });
@@ -106,14 +157,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           }
 
           if (providers.length === 0) {
+            // 历史配置迁移：优先沿用已存的单配置字段，缺失项统一由预设补齐
+            const storedProvider = raw.ai_provider || '';
+            const fallback = createDefaultProviderConfig('provider-default');
             providers = [
               {
                 id: 'provider-default',
-                name: (raw.ai_provider || defaultSettings.ai_provider) + ' 默认',
-                provider: raw.ai_provider || defaultSettings.ai_provider,
-                base_url: raw.ai_base_url || defaultSettings.ai_base_url,
-                api_key: raw.ai_api_key || defaultSettings.ai_api_key,
-                model: raw.ai_model || defaultSettings.ai_model,
+                name: `${storedProvider || fallback.provider} 默认`,
+                provider: storedProvider || fallback.provider,
+                base_url: raw.ai_base_url || fallback.base_url,
+                api_key: raw.ai_api_key || '',
+                model: raw.ai_model || fallback.model,
               },
             ];
           }
@@ -138,25 +192,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             themeId: (raw.theme_id as ThemeId) || 'aliyun',
           });
           if (permMode) {
+            // 工作区智能体与全局会话共用同一套授权策略，避免设置页改动对工作区不生效
             useAgentStore.getState().setPermissionMode(permMode);
+            useWorkspaceStore.getState().setPermissionMode(permMode);
           }
         }
       } else {
-        const local = localStorage.getItem('tini_terminal_settings') || localStorage.getItem('ai_terminal_settings');
-        const localTheme = (localStorage.getItem('tini_terminal_theme') || localStorage.getItem('ai_terminal_theme')) as ThemeId;
+        const local = readStored('settings');
+        const localTheme = readStored('theme') as ThemeId | null;
         if (local) {
           try {
             const parsed = JSON.parse(local);
             let providers: AiProviderConfig[] = parsed.providers || [];
             if (!Array.isArray(providers) || providers.length === 0) {
+              const fallback = createDefaultProviderConfig('provider-default');
               providers = [
                 {
                   id: 'provider-default',
-                  name: (parsed.ai_provider || defaultSettings.ai_provider) + ' 默认',
-                  provider: parsed.ai_provider || defaultSettings.ai_provider,
-                  base_url: parsed.ai_base_url || defaultSettings.ai_base_url,
-                  api_key: parsed.ai_api_key || defaultSettings.ai_api_key,
-                  model: parsed.ai_model || defaultSettings.ai_model,
+                  name: `${parsed.ai_provider || fallback.provider} 默认`,
+                  provider: parsed.ai_provider || fallback.provider,
+                  base_url: parsed.ai_base_url || fallback.base_url,
+                  api_key: parsed.ai_api_key || '',
+                  model: parsed.ai_model || fallback.model,
                 },
               ];
             }
@@ -180,6 +237,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             });
             if (parsed.permission_mode) {
               useAgentStore.getState().setPermissionMode(parsed.permission_mode as PermissionMode);
+              useWorkspaceStore.getState().setPermissionMode(parsed.permission_mode as PermissionMode);
             }
           } catch (e) {
             console.error('解析本地系统设置失败:', e);
@@ -231,7 +289,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           settings: payload,
         });
       } else {
-        localStorage.setItem('tini_terminal_settings', JSON.stringify(updated));
+        writeStored('settings', JSON.stringify(updated));
       }
     } catch (e) {
       console.error('保存系统设置失败:', e);
@@ -253,7 +311,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           },
         });
       } else {
-        localStorage.setItem('tini_terminal_theme', id);
+        writeStored('theme', id);
       }
     } catch (e) {
       console.error('保存主题设置失败:', e);
@@ -279,14 +337,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   toggleSftpDrawer: (open?: boolean) => {
-    set((state) => ({
-      isSftpDrawerOpen: open !== undefined ? open : !state.isSftpDrawerOpen,
-    }));
+    set((state) => {
+      const next = open !== undefined ? open : !state.isSftpDrawerOpen;
+      writeStored('sftpOpen', String(next));
+      return { isSftpDrawerOpen: next };
+    });
   },
 
   toggleAiPanel: (open?: boolean) => {
     set((state) => {
       const next = open !== undefined ? open : !state.isAiPanelOpen;
+      writeStored('aiPanelOpen', String(next));
       return { isAiPanelOpen: next };
     });
   },
@@ -294,7 +355,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   toggleServerSidebar: (open?: boolean) => {
     set((state) => {
       const next = open !== undefined ? open : !state.isServerSidebarOpen;
-      localStorage.setItem('tini_terminal_sidebar_open', String(next));
+      writeStored('sidebarOpen', String(next));
       return { isServerSidebarOpen: next };
     });
   },
@@ -303,19 +364,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const maxWidth = typeof window !== 'undefined' ? Math.max(480, Math.min(640, window.innerWidth - 400)) : 480;
     const clamped = Math.max(160, Math.min(maxWidth, width));
     set({ sidebarWidth: clamped });
-    localStorage.setItem('tini_terminal_sidebar_width', String(clamped));
+    writeStored('sidebarWidth', String(clamped));
   },
 
   setAiPanelWidth: (width: number) => {
     const maxWidth = typeof window !== 'undefined' ? Math.max(640, window.innerWidth - 300) : 1800;
     const clamped = Math.max(260, Math.min(maxWidth, width));
     set({ aiPanelWidth: clamped });
-    localStorage.setItem('tini_terminal_ai_width', String(clamped));
+    writeStored('aiWidth', String(clamped));
   },
 
   setTerminalFontSize: (size: number) => {
     const clamped = Math.max(11, Math.min(22, size));
     set({ terminalFontSize: clamped });
-    localStorage.setItem('tini_terminal_font_size', String(clamped));
+    writeStored('fontSize', String(clamped));
   },
 }));

@@ -152,7 +152,8 @@ tini-terminal/
 │   │   ├── sftp/               # 远程文件管理抽屉与文本编辑器
 │   │   ├── terminal/           # WebGL 终端渲染、会话驱动与输入流管理
 │   │   └── workspace/          # 运维工作区与上下文面板
-│   ├── lib/                    # AI 工具执行调度器与工具集封装
+│   ├── lib/                    # AI 工具执行调度器、流式解析与工具集封装
+│   │   └── aiProviders.ts      # 模型厂商预设与运行时参数解析
 │   ├── stores/                 # Zustand 状态管理 (主机、终端、配置、智能体)
 │   ├── types/                  # 全局 TypeScript 类型与 Tauri API 声明
 │   ├── App.tsx                 # 前端根组件
@@ -162,10 +163,11 @@ tini-terminal/
 │   ├── capabilities/           # 窗口与原生功能权限配置
 │   ├── src/                    # Rust 后端源码
 │   │   ├── agent.rs            # AI 服务适配与网络连通性
+│   │   ├── crypto.rs           # 主机凭证 AES-256-GCM 加解密
 │   │   ├── lib.rs              # Tauri IPC 命令注册中心
 │   │   ├── main.rs             # 桌面程序入口
 │   │   ├── pty.rs              # 本地虚拟 PTY 驱动器
-│   │   ├── safety.rs           # 危险命令静态拦截器
+│   │   ├── safety.rs           # 危险命令静态拦截器（支持分级策略）
 │   │   ├── sftp.rs             # SFTP 远程文件传输与读写
 │   │   ├── ssh.rs              # 异步 SSH2 客户端会话驱动
 │   │   ├── storage.rs          # 本地 SQLite 数据持久化

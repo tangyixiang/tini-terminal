@@ -33,7 +33,13 @@ export const StatusBar: React.FC = () => {
               : '就绪 (无活动终端)'}
           </span>
         </div>
-        <span>延迟: {activeTab?.connected ? `${latencyMs}ms` : '--'}</span>
+        <span>
+          延迟: {activeTab?.connected
+            ? latencyMs !== null
+              ? `${latencyMs}ms`
+              : '待测'
+            : '--'}
+        </span>
         <span>编码: UTF-8</span>
       </div>
     </footer>

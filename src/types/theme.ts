@@ -2,10 +2,44 @@ import type { ITheme } from '@xterm/xterm';
 
 export type ThemeId = 'aliyun' | 'vscode' | 'github_dark' | 'github_light' | 'one_dark';
 
+/**
+ * 主按钮样式的兜底值
+ * 具体渲染请优先使用 getPrimaryButtonStyle(theme)，以跟随当前主题强调色
+ */
 export const PRIMARY_BUTTON_STYLE = {
   backgroundColor: '#23d18b',
   color: '#064e3b',
 } as const;
+
+/** 依据背景亮度自动选择可读的前景色，避免浅色主题下按钮文字不可见 */
+function readableForeground(background: string): string {
+  const hex = background.replace('#', '');
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex.padEnd(6, '0').slice(0, 6);
+  const r = parseInt(full.slice(0, 2), 16) || 0;
+  const g = parseInt(full.slice(2, 4), 16) || 0;
+  const b = parseInt(full.slice(4, 6), 16) || 0;
+  // 相对亮度（sRGB 近似加权）
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#0b1a14' : '#ffffff';
+}
+
+/** 主操作按钮样式，统一由主题强调色驱动 */
+export function getPrimaryButtonStyle(theme: ThemeConfig): {
+  backgroundColor: string;
+  color: string;
+} {
+  const background = theme.ui.accent || PRIMARY_BUTTON_STYLE.backgroundColor;
+  return {
+    backgroundColor: background,
+    color: readableForeground(background),
+  };
+}
 
 export interface ThemeConfig {
   id: ThemeId;

@@ -12,7 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
-import { BUILTIN_THEMES, type ThemeId } from '../../types/theme';
+import { BUILTIN_THEMES, getPrimaryButtonStyle, type ThemeId } from '../../types/theme';
 
 export const TitleBar: React.FC = () => {
   const { tabs, activeTabId } = useTerminalStore();
@@ -304,10 +304,12 @@ export const TitleBar: React.FC = () => {
           onClick={() => toggleAiPanel()}
           className="px-2.5 py-1 text-xs rounded flex items-center gap-1.5 font-semibold cursor-pointer transition-colors"
           style={{
-            backgroundColor: isAiPanelOpen
-              ? '#23d18b'
-              : currentTheme.ui.hoverBg,
-            color: isAiPanelOpen ? '#064e3b' : currentTheme.ui.text,
+            ...(isAiPanelOpen
+              ? getPrimaryButtonStyle(currentTheme)
+              : {
+                  backgroundColor: currentTheme.ui.hoverBg,
+                  color: currentTheme.ui.text,
+                }),
           }}
         >
           <Sparkles className="w-3.5 h-3.5" />

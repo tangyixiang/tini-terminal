@@ -24,7 +24,7 @@ import { useAgentStore, createDefaultSessionState } from '../../stores/useAgentS
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { runAgentTask, abortAgentTask } from '../../lib/agent/runner';
-import { BUILTIN_THEMES } from '../../types/theme';
+import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
 import { MiniTerminalConsole } from './MiniTerminalConsole';
 import type { ToolCallItem } from '../../types';
 import { MarkdownView } from './MarkdownView';
@@ -858,8 +858,7 @@ export const AgentPanel: React.FC = () => {
                 disabled={!activeTab || !input.trim()}
                 className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
                 style={{
-                  backgroundColor: '#23d18b',
-                  color: '#064e3b',
+                  ...getPrimaryButtonStyle(currentTheme),
                   fontSize: `${subFontSize}px`,
                 }}
               >

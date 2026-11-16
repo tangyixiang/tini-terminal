@@ -92,7 +92,10 @@ impl TaskExecutor {
                 let _ = ch.stderr().read_to_end(&mut stderr_buf);
 
                 let _ = ch.wait_close();
-                let code = ch.exit_status().unwrap_or(0);
+                // 取不到退出码说明通道异常终止，不能默认按成功处理
+                let code = ch.exit_status().map_err(|e| {
+                    format!("无法获取远程命令退出码，通道可能已异常关闭: {}", e)
+                })?;
                 let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
                 let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
                 let elapsed = start.elapsed().as_millis() as u64;
