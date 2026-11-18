@@ -12,6 +12,8 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore';
 import { BUILTIN_THEMES } from '../../types/theme';
+import { clampSidebarWidth } from '../../lib/layout';
+import { useViewportWidth } from '../../lib/useViewportWidth';
 import type { ServerRecord } from '../../types';
 
 export const ServerSidebar: React.FC = () => {
@@ -43,6 +45,8 @@ export const ServerSidebar: React.FC = () => {
   }, []);
 
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
+  const viewportWidth = useViewportWidth();
+  const resolvedSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
 
   const filtered = servers.filter(
     (s) =>
@@ -88,7 +92,7 @@ export const ServerSidebar: React.FC = () => {
     <aside
       className="border-r flex flex-col shrink-0 select-none transition-colors duration-200 overflow-hidden"
       style={{
-        width: sidebarWidth,
+        width: resolvedSidebarWidth,
         backgroundColor: currentTheme.ui.sidebarBg,
         borderColor: currentTheme.ui.border,
       }}

@@ -25,6 +25,8 @@ import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { runAgentTask, abortAgentTask } from '../../lib/agent/runner';
 import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
+import { maxAiPanelWidth, MIN_AI_PANEL_WIDTH } from '../../lib/layout';
+import { useViewportWidth } from '../../lib/useViewportWidth';
 import { MiniTerminalConsole } from './MiniTerminalConsole';
 import type { ToolCallItem } from '../../types';
 import { MarkdownView } from './MarkdownView';
@@ -67,11 +69,20 @@ export const AgentPanel: React.FC = () => {
   const {
     themeId,
     aiPanelWidth,
-    setAiPanelWidth,
+    sidebarWidth,
+    toggleAiPanelWide,
     toggleAiPanel,
     terminalFontSize,
   } = useSettingsStore();
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
+
+  // 追踪窗口宽度，保证面板宽度上限始终跟随当前视口
+  const viewportWidth = useViewportWidth();
+  const panelMaxWidth = maxAiPanelWidth(viewportWidth, sidebarWidth);
+  const resolvedPanelWidth = Math.max(
+    MIN_AI_PANEL_WIDTH,
+    Math.min(aiPanelWidth, panelMaxWidth)
+  );
 
   // 动态字体大小联动（由系统字体配置统一驱动）
   const baseFontSize = terminalFontSize || 14;
@@ -179,7 +190,7 @@ export const AgentPanel: React.FC = () => {
     <aside
       className="border-l flex flex-col shrink-0 select-none transition-colors duration-200 overflow-hidden"
       style={{
-        width: aiPanelWidth,
+        width: resolvedPanelWidth,
         backgroundColor: currentTheme.ui.agentBg,
         borderColor: currentTheme.ui.border,
       }}
@@ -245,14 +256,7 @@ export const AgentPanel: React.FC = () => {
           </button>
 
           <button
-            onClick={() => {
-              if (aiPanelWidth > 500) {
-                setAiPanelWidth(360);
-              } else {
-                const wideWidth = Math.min(Math.round(window.innerWidth * 0.48), window.innerWidth - 320);
-                setAiPanelWidth(Math.max(600, wideWidth));
-              }
-            }}
+            onClick={toggleAiPanelWide}
             className="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity"
             style={{ color: currentTheme.ui.text }}
             title={aiPanelWidth > 500 ? '恢复紧凑宽度' : '加宽面板'}

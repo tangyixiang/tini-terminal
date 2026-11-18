@@ -9,6 +9,56 @@ export interface TerminalViewOptions {
   theme?: ITheme;
 }
 
+/**
+ * 使用与 xterm 相同的 canvas 度量方式获取字符高度（ascent + descent）。
+ * 这是 xterm 在支持 TextMetrics 时的首选度量策略，避免依赖其内部私有字段。
+ */
+let measureCtx: CanvasRenderingContext2D | null = null;
+function measureCharHeight(fontFamily: string, fontSize: number): number | null {
+  try {
+    if (!measureCtx) {
+      const canvas = typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(8, 8)
+        : document.createElement('canvas');
+      measureCtx = (canvas.getContext('2d') as CanvasRenderingContext2D | null) ?? null;
+    }
+    if (!measureCtx) return null;
+
+    measureCtx.font = `${fontSize}px ${fontFamily}`;
+    const metrics = measureCtx.measureText('W');
+    const ascent = metrics.fontBoundingBoxAscent;
+    const descent = metrics.fontBoundingBoxDescent;
+    if (typeof ascent === 'number' && typeof descent === 'number' && ascent + descent > 0) {
+      return ascent + descent;
+    }
+    // 退回行高近似值（多数等宽字体的 em 行高约为 1.2 倍字号）
+    return fontSize * 1.2;
+  } catch {
+    return fontSize * 1.2;
+  }
+}
+
+/**
+ * xterm 的单元格高度按设备像素计算：
+ *   cellHeight(device) = floor(ceil(charHeight × dpr) × lineHeight)
+ *   cellHeight(css)    = cellHeight(device) / dpr
+ * dpr=2、fontSize=14 时常见结果是 23.5px 这类半像素行高，行间亚像素缝隙会让字形
+ * 相互渗入，表现为文字重叠与错行。反解 lineHeight 让 CSS 行高精确落在整数像素。
+ */
+function resolveIntegerLineHeight(
+  charHeightDevice: number,
+  fontSize: number,
+  dpr: number
+): number | null {
+  if (!Number.isFinite(charHeightDevice) || charHeightDevice <= 0) return null;
+  const targetCss = Math.max(fontSize + 1, Math.round(fontSize * 1.45));
+  const targetDevice = Math.round(targetCss * dpr);
+  // +0.5 保证 floor() 恰好取到目标整数值
+  const ratio = (targetDevice + 0.5) / charHeightDevice;
+  if (!Number.isFinite(ratio)) return null;
+  return Number(Math.min(1.8, Math.max(1.05, ratio)).toFixed(4));
+}
+
 export class TerminalView {
   private term: Terminal;
   private fitAddon: FitAddon;
@@ -28,13 +78,18 @@ export class TerminalView {
     this.term = new Terminal({
       fontFamily: terminalFontFamily,
       fontSize: options?.fontSize || 14,
-      lineHeight: 1.42,
+      lineHeight: 1.45,
       letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 2,
       allowProposedApi: true,
       scrollback: 10000,
+      // 保留给 WebGL 渲染器使用；当前默认 DOM 渲染器会忽略此项
+      rescaleOverlappingGlyphs: true,
+      drawBoldTextInBrightColors: true,
+      smoothScrollDuration: 0,
+      scrollOnUserInput: true,
       theme: options?.theme,
     });
 
@@ -62,13 +117,55 @@ export class TerminalView {
   public open(container: HTMLElement): void {
     if (this.isDisposed) return;
     this.term.open(container);
+    this.applyIntegerLineHeight();
+  }
+
+  /**
+   * 依据实际字体度量把行高归整为整数 CSS 像素。
+   *
+   * xterm(DOM 渲染器) 的行高计算链路是：
+   *   charHeight(device) = ceil(字体 ascent+descent × dpr)
+   *   cellHeight(device) = floor(charHeight(device) × lineHeight)
+   *   cellHeight(css)    = cellHeight(device) / dpr
+   * 因此 lineHeight=1.45 在 dpr=2 时会得到 23.5px 这类半像素行高，
+   * 行间亚像素缝隙就是文字重叠/错行（尤其输入行压住上一行输出）的根源。
+   * 这里反解一个 lineHeight，使 cellHeight(css) 恰好落在整数像素上。
+   *
+   * @returns 是否实际调整了行高（调用方据此决定是否重新 fit）
+   */
+  public applyIntegerLineHeight(): boolean {
+    if (this.isDisposed) return false;
+    try {
+      const fontSize = this.term.options.fontSize || 14;
+      const fontFamily = this.term.options.fontFamily || 'monospace';
+      const charHeight = measureCharHeight(fontFamily, fontSize);
+      if (!charHeight) return false;
+
+      const dpr =
+        typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+      const charHeightDevice = Math.ceil(charHeight * dpr);
+      const ratio = resolveIntegerLineHeight(charHeightDevice, fontSize, dpr);
+      if (ratio === null) return false;
+
+      if (Math.abs((this.term.options.lineHeight || 1) - ratio) < 0.001) return false;
+      this.term.options.lineHeight = ratio;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   public fit(): { cols: number; rows: number } | null {
     if (this.isDisposed) return null;
     try {
+      const before = { cols: this.term.cols, rows: this.term.rows };
       this.fitAddon.fit();
-      return { cols: this.term.cols, rows: this.term.rows };
+      const after = { cols: this.term.cols, rows: this.term.rows };
+      // 行列发生变化时强制整屏重绘，清除 resize 前残留的旧画布帧，避免字符叠加
+      if (before.cols !== after.cols || before.rows !== after.rows) {
+        this.term.refresh(0, Math.max(0, after.rows - 1));
+      }
+      return after;
     } catch {
       return null;
     }
@@ -134,6 +231,8 @@ export class TerminalView {
   public setFontSize(fontSize: number): void {
     if (this.isDisposed) return;
     this.term.options.fontSize = fontSize;
+    // 字号变化会改变字符度量，行高需重新归整为整数像素
+    this.applyIntegerLineHeight();
   }
 
   public refresh(start = 0, end = this.term.rows - 1): void {

@@ -469,8 +469,9 @@ export const FileManagerDrawer: React.FC = () => {
   return (
     <div
       ref={drawerRef}
-      className="fixed inset-y-0 right-0 w-[580px] border-l shadow-2xl z-40 flex flex-col select-none transition-colors duration-200"
+      className="fixed inset-y-0 right-0 border-l shadow-2xl z-40 flex flex-col select-none transition-colors duration-200"
       style={{
+        width: 'min(580px, 72vw)',
         backgroundColor: currentTheme.ui.cardBg,
         borderColor: currentTheme.ui.border,
         color: currentTheme.ui.text,

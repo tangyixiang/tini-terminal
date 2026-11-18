@@ -3,6 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AiSettings, AiProviderConfig, PermissionMode, AppPrimaryMode } from '../types';
 import { BUILTIN_THEMES, type ThemeConfig, type ThemeId } from '../types/theme';
 import { createDefaultProviderConfig } from '../lib/aiProviders';
+import {
+  clampAiPanelPreference,
+  clampSidebarPreference,
+  nextAiPanelPreference,
+} from '../lib/layout';
 import { useAgentStore } from './useAgentStore';
 import { useWorkspaceStore } from './useWorkspaceStore';
 
@@ -76,6 +81,10 @@ interface SettingsState {
   setSidebarWidth: (width: number) => void;
   setAiPanelWidth: (width: number) => void;
   setTerminalFontSize: (size: number) => void;
+  /** 窗口尺寸变化后重新收敛面板宽度，避免恢复的旧宽度把终端挤出视口 */
+  syncLayoutToViewport: () => void;
+  /** 在紧凑与宽屏之间切换 AI 面板宽度 */
+  toggleAiPanelWide: () => void;
 }
 
 const defaultProvider: AiProviderConfig = createDefaultProviderConfig();
@@ -135,8 +144,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       if (savedSftpOpen !== null) set({ isSftpDrawerOpen: savedSftpOpen === 'true' });
       if (savedSidebarOpen !== null) set({ isServerSidebarOpen: savedSidebarOpen === 'true' });
-      if (savedSidebarWidth) set({ sidebarWidth: Number(savedSidebarWidth) });
-      if (savedAiWidth) set({ aiPanelWidth: Number(savedAiWidth) });
+      if (savedSidebarWidth) get().setSidebarWidth(Number(savedSidebarWidth));
+      if (savedAiWidth) get().setAiPanelWidth(Number(savedAiWidth));
       if (savedFontSize) set({ terminalFontSize: Number(savedFontSize) });
 
       if (window.__TAURI_INTERNALS__) {
@@ -361,17 +370,33 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setSidebarWidth: (width: number) => {
-    const maxWidth = typeof window !== 'undefined' ? Math.max(480, Math.min(640, window.innerWidth - 400)) : 480;
-    const clamped = Math.max(160, Math.min(maxWidth, width));
+    // 只记录用户偏好值，实际渲染宽度由组件按当前视口收敛，
+    // 避免小窗口下的临时收缩覆盖掉用户在大窗口里的布局。
+    const clamped = clampSidebarPreference(width);
     set({ sidebarWidth: clamped });
     writeStored('sidebarWidth', String(clamped));
   },
 
   setAiPanelWidth: (width: number) => {
-    const maxWidth = typeof window !== 'undefined' ? Math.max(640, window.innerWidth - 300) : 1800;
-    const clamped = Math.max(260, Math.min(maxWidth, width));
+    const clamped = clampAiPanelPreference(width);
     set({ aiPanelWidth: clamped });
     writeStored('aiWidth', String(clamped));
+  },
+
+  syncLayoutToViewport: () => {
+    // 面板宽度在渲染时按视口收敛，这里仅清理超出绝对区间的历史脏值
+    const { sidebarWidth, aiPanelWidth } = get();
+    const nextSidebar = clampSidebarPreference(sidebarWidth);
+    const nextAi = clampAiPanelPreference(aiPanelWidth);
+    if (nextSidebar === sidebarWidth && nextAi === aiPanelWidth) return;
+    set({ sidebarWidth: nextSidebar, aiPanelWidth: nextAi });
+    writeStored('sidebarWidth', String(nextSidebar));
+    writeStored('aiWidth', String(nextAi));
+  },
+
+  toggleAiPanelWide: () => {
+    // 基于偏好值切换，避免把当前视口的临时收敛结果写回用户设置
+    get().setAiPanelWidth(nextAiPanelPreference(get().aiPanelWidth));
   },
 
   setTerminalFontSize: (size: number) => {

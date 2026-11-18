@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../stores/useSettingsStore';
 import { BUILTIN_THEMES } from '../../types/theme';
 
 export const StatusBar: React.FC = () => {
-  const { tabs, activeTabId, latencyMs } = useTerminalStore();
+  const { tabs, activeTabId } = useTerminalStore();
   const { themeId } = useSettingsStore();
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -18,14 +18,14 @@ export const StatusBar: React.FC = () => {
         color: currentTheme.ui.textMuted,
       }}
     >
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-4 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
           <span
-            className={`w-2 h-2 rounded-full ${
+            className={`w-2 h-2 rounded-full shrink-0 ${
               activeTab?.connected ? 'bg-emerald-500' : 'bg-zinc-500'
             }`}
           />
-          <span style={{ color: currentTheme.ui.text }}>
+          <span className="truncate" style={{ color: currentTheme.ui.text }}>
             {activeTab
               ? activeTab.isSsh && activeTab.server
                 ? `已连接: ${activeTab.server.name} (${activeTab.server.host}:${activeTab.server.port})`
@@ -33,14 +33,7 @@ export const StatusBar: React.FC = () => {
               : '就绪 (无活动终端)'}
           </span>
         </div>
-        <span>
-          延迟: {activeTab?.connected
-            ? latencyMs !== null
-              ? `${latencyMs}ms`
-              : '待测'
-            : '--'}
-        </span>
-        <span>编码: UTF-8</span>
+        <span className="shrink-0">编码: UTF-8</span>
       </div>
     </footer>
   );

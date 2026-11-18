@@ -14,6 +14,8 @@ import { useSettingsStore } from './stores/useSettingsStore';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { invoke } from '@tauri-apps/api/core';
 import { BUILTIN_THEMES, getPrimaryButtonStyle } from './types/theme';
+import { clampAiPanelWidth, clampSidebarWidth } from './lib/layout';
+import { useViewportWidth } from './lib/useViewportWidth';
 import { Terminal, Plus } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -30,17 +32,27 @@ export const App: React.FC = () => {
     setAiPanelWidth,
     toggleServerModal,
     themeId,
+    toggleAiPanelWide,
+    syncLayoutToViewport,
   } = useSettingsStore();
   const { tabs, activeTabId, openLocalTab } = useTerminalStore();
 
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
+
+  // 视口宽度变化时按当前可用空间收敛面板宽度（仅影响渲染，不覆盖用户偏好）
+  const viewportWidth = useViewportWidth();
+  const effectiveSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
+  const effectiveAiPanelWidth = clampAiPanelWidth(aiPanelWidth, viewportWidth, effectiveSidebarWidth);
 
   useEffect(() => {
     if (hasInitializedRef.current) return;
     hasInitializedRef.current = true;
 
     fetchServers();
-    fetchSettings();
+    fetchSettings().then(() => {
+      // 清理历史遗留的超区间宽度值（渲染时仍会按当前视口二次收敛）
+      syncLayoutToViewport();
+    });
   }, []);
 
   // 动态同步原生系统窗口主题（暗色/浅色模式）
@@ -57,17 +69,15 @@ export const App: React.FC = () => {
   const handleLeftResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startWidth = sidebarWidth;
+    const startWidth = effectiveSidebarWidth;
     setIsResizingLeft(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      const maxWidth = Math.max(360, Math.min(600, window.innerWidth - 400));
-      const newWidth = Math.max(160, Math.min(maxWidth, startWidth + (moveEvent.clientX - startX)));
-      setSidebarWidth(newWidth);
+      const target = startWidth + (moveEvent.clientX - startX);
+      setSidebarWidth(clampSidebarWidth(target, window.innerWidth));
     };
-
     const onMouseUp = () => {
       setIsResizingLeft(false);
       document.body.style.cursor = 'default';
@@ -84,16 +94,14 @@ export const App: React.FC = () => {
   const handleRightResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startWidth = aiPanelWidth;
+    const startWidth = effectiveAiPanelWidth;
     setIsResizingRight(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const onMouseMove = (moveEvent: MouseEvent) => {
-      // 允许自由拖拽宽度，仅保留左侧最小终端与面板工作区
-      const maxWidth = Math.max(640, window.innerWidth - 300);
-      const newWidth = Math.max(260, Math.min(maxWidth, startWidth - (moveEvent.clientX - startX)));
-      setAiPanelWidth(newWidth);
+      const target = startWidth - (moveEvent.clientX - startX);
+      setAiPanelWidth(clampAiPanelWidth(target, window.innerWidth, window.innerWidth > 0 ? clampSidebarWidth(sidebarWidth, window.innerWidth) : 0));
     };
 
     const onMouseUp = () => {
@@ -110,12 +118,7 @@ export const App: React.FC = () => {
 
   // 双击手柄在紧凑宽度与宽屏模式间快速切换
   const handleRightDoubleClick = () => {
-    if (aiPanelWidth > 500) {
-      setAiPanelWidth(360);
-    } else {
-      const wideWidth = Math.min(Math.round(window.innerWidth * 0.48), window.innerWidth - 320);
-      setAiPanelWidth(Math.max(600, wideWidth));
-    }
+    toggleAiPanelWide();
   };
 
   return (
@@ -204,10 +207,10 @@ export const App: React.FC = () => {
                     {tabs.map((tab) => (
                       <div
                         key={tab.id}
-                        className={`w-full h-full ${
+                        className={`absolute inset-0 ${
                           tab.id === activeTabId
-                            ? 'relative z-10'
-                            : 'absolute inset-0 invisible pointer-events-none -z-10'
+                            ? 'visible z-10'
+                            : 'invisible pointer-events-none z-0'
                         }`}
                       >
                         <XTerminal tab={tab} isActive={tab.id === activeTabId} />

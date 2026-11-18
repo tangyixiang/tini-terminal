@@ -19,6 +19,9 @@ export class TerminalSession {
   private isDisposed = false;
   private lastCols = 0;
   private lastRows = 0;
+  /** 待发送的目标尺寸，保证 resize 请求串行且只保留最后一次 */
+  private pendingSize: { cols: number; rows: number } | null = null;
+  private isResizing = false;
 
   constructor(options: TerminalSessionOptions) {
     this.tab = options.tab;
@@ -106,6 +109,10 @@ export class TerminalSession {
   public async disconnect(): Promise<void> {
     this.isConnected = false;
     this.isConnecting = false;
+    this.pendingSize = null;
+    // 重连后 PTY 尺寸会回到初始值，必须允许再次下发当前视口尺寸
+    this.lastCols = 0;
+    this.lastRows = 0;
     this.inputStream.clear();
 
     if (this.channel) {
@@ -150,17 +157,31 @@ export class TerminalSession {
     this.lastCols = cols;
     this.lastRows = rows;
 
-    if (window.__TAURI_INTERNALS__ && this.isConnected) {
-      try {
-        await invoke('resize_terminal', {
-          sessionId: this.tab.sessionId,
-          isSsh: this.tab.isSsh,
-          cols,
-          rows,
-        });
-      } catch (err) {
-        console.error('调整终端尺寸异常:', err);
+    if (!window.__TAURI_INTERNALS__ || !this.isConnected) return;
+
+    // 串行化尺寸同步：并发 invoke 的返回顺序不确定，
+    // 若旧尺寸后到达会让远端 PTY 停留在错误列数，导致提示符折行覆盖上一行。
+    this.pendingSize = { cols, rows };
+    if (this.isResizing) return;
+
+    this.isResizing = true;
+    try {
+      while (this.pendingSize && !this.isDisposed) {
+        const target = this.pendingSize;
+        this.pendingSize = null;
+        try {
+          await invoke('resize_terminal', {
+            sessionId: this.tab.sessionId,
+            isSsh: this.tab.isSsh,
+            cols: target.cols,
+            rows: target.rows,
+          });
+        } catch (err) {
+          console.error('调整终端尺寸异常:', err);
+        }
       }
+    } finally {
+      this.isResizing = false;
     }
   }
 

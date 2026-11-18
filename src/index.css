@@ -47,6 +47,39 @@
   background: #3f3f46;
 }
 
+/* 隐藏横向滚动条但保留滚动能力（标签栏、胶囊列表、面包屑） */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/*
+ * xterm 默认把 viewport 底色写死为 #000，与主题终端底色不一致会露出黑边；
+ * 同时内建滚动条会额外占用宽度，导致右侧出现与主题不协调的亮条。
+ */
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: thin;
+}
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* Terminal Cursor Blink */
 .cursor-blink {
   animation: cursorBlink 1s step-end infinite;

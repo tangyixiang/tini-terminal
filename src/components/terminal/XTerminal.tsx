@@ -81,9 +81,33 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
     });
     focusRef.current = focus;
 
-    // 初始布局与连接建立
-    resize.sync();
-    session.connect(view.cols, view.rows);
+    // 初始布局与连接建立：先等容器量出有效尺寸再创建 PTY，
+    // 避免以默认 80x24 建连后立刻 resize 导致首屏提示符重排错位。
+    let isCancelled = false;
+    const bootstrap = (attempt: number) => {
+      if (isCancelled) return;
+      const initialSize = resize.sync(true);
+      if (initialSize) {
+        // 行高归整会改变单元格高度，需重新取一次可用行列后建连
+        view.applyIntegerLineHeight();
+        const size = resize.sync(true) ?? initialSize;
+        session.connect(size.cols, size.rows).then(() => {
+          if (isCancelled) return;
+          // 建连耗时期间用户可能已拖动分栏，连接成功后再校正一次远端 PTY 尺寸
+          resize.resetAppliedSize();
+          resize.sync(true);
+          view.refresh();
+        });
+        return;
+      }
+      if (attempt < 24) {
+        requestAnimationFrame(() => bootstrap(attempt + 1));
+        return;
+      }
+      // 兜底：容器长时间无有效尺寸时按当前视口尺寸建连
+      session.connect(view.cols, view.rows);
+    };
+    bootstrap(0);
 
     if (isActiveRef.current) {
       focus.focus();
@@ -92,14 +116,15 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
       setTimeout(() => focus.focus(), 200);
     }
 
-    setTimeout(() => {
-      resize.sync();
-    }, 80);
-    setTimeout(() => {
-      resize.sync();
-    }, 200);
+    const layoutTimers = [80, 200].map((delay) =>
+      setTimeout(() => {
+        resize.sync();
+      }, delay)
+    );
 
     return () => {
+      isCancelled = true;
+      layoutTimers.forEach(clearTimeout);
       focus.dispose();
       resize.dispose();
       input.dispose();
@@ -140,7 +165,7 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
   useEffect(() => {
     if (terminalFontSize && viewRef.current) {
       viewRef.current.setFontSize(terminalFontSize);
-      resizeRef.current?.sync();
+      resizeRef.current?.sync(true);
     }
   }, [terminalFontSize]);
 
@@ -166,12 +191,14 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
     return () => window.removeEventListener('resize', handleWinResize);
   }, []);
 
-  // 8. 响应字体加载完成
+  // 8. 响应字体加载完成：字体度量变化会改变行高，需要重新归整并重排
   useEffect(() => {
     if (document.fonts?.ready) {
       document.fonts.ready.then(() => {
-        resizeRef.current?.sync();
-        viewRef.current?.refresh();
+        if (!viewRef.current) return;
+        viewRef.current.applyIntegerLineHeight();
+        resizeRef.current?.sync(true);
+        viewRef.current.refresh();
       });
     }
   }, []);
@@ -231,11 +258,18 @@ export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) =>
         focusRef.current?.focus();
       }}
     >
-      <div
-        ref={containerRef}
-        className="w-full h-full p-2 overflow-hidden"
-        style={{ backgroundColor: currentTheme.ui.terminalBg }}
-      />
+      {/*
+        内边距必须放在外层包裹容器上：FitAddon 以 .xterm 的父元素 border-box 计算行列，
+        但不会扣除父元素自身的 padding，若把 p-2 放在测量容器上会多算出约 2 列，
+        远端 shell 据此换行后提示符会覆盖上一行文字。
+      */}
+      <div className="w-full h-full p-2 overflow-hidden">
+        <div
+          ref={containerRef}
+          className="w-full h-full overflow-hidden"
+          style={{ backgroundColor: currentTheme.ui.terminalBg }}
+        />
+      </div>
     </div>
   );
 };
