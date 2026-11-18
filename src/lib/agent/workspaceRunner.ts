@@ -23,9 +23,12 @@ import {
   buildConclusionPrompt,
   buildDeterministicConclusion,
   buildHistoryToolResult,
-  hasConclusionReport,
+  dropIncompleteConclusion,
+  isConclusionComplete,
+  isTrailingConclusionComplete,
   parseThinkTag,
   sanitizeHistoryContent,
+  upsertConclusion,
 } from './summary';
 import type { ToolCallItem } from '../../types';
 
@@ -260,9 +263,10 @@ ${hostDescriptions}
 4. 必须给出最终结论
    - 所有工具调用结束后，必须在回复正文中给出多机协同结论，格式如下：
 ### 最终执行结论
-- 总体达成情况: [已完成 / 异常]
-- 节点状态与验证: [各主机执行结果、服务状态或对比差异]
-- 重点变更与同步: [跨机配置同步或脚本下发]
+- 总体达成情况: [已完成 / 异常] + 一句话概述
+- 节点状态与验证: [各主机真实数据：服务名/进程 PID/端口/状态，逐节点列出]
+- 重点变更与同步: [跨机配置同步或脚本下发；无则写"无"]
+   - 「节点状态与验证」必须引用本轮工具返回的真实数据，不能只写"运行正常"之类的空泛描述，也不要写成半句。
    - 不允许只调用工具而无任何总结，也不允许空回复。
 5. 以最终状态判定成败
    - 判断依据是集群业务目标与各节点最终验证状态，而非中间过程。
@@ -349,8 +353,14 @@ ${hostDescriptions}
   let accumulatedContent = '';
   // 每次工具执行完毕后重置结论基线，确保只认最近一次执行之后的结论文本
   let conclusionBaseline = 0;
+  // 最近一次输出的结束原因是否属于被截断，截断的结论一律视为未闭环
+  let lastSegmentTruncated = false;
+  // 截断提示独立保存：兜底替换残句后仍需向用户明示输出被截断
+  let conclusionFinishNote = '';
   const hasFreshConclusion = () =>
-    hasConclusionReport(accumulatedContent.slice(conclusionBaseline));
+    isConclusionComplete(accumulatedContent.slice(conclusionBaseline), {
+      truncated: lastSegmentTruncated,
+    });
 
   try {
     while (loopCount < maxLoops) {
@@ -534,6 +544,10 @@ ${hostDescriptions}
           : loopContent;
       }
 
+      // 服务端明确的截断/拦截视为未闭环；内容本身的完整性由 isConclusionComplete 兜底校验
+      lastSegmentTruncated =
+        lastFinishReason === 'length' || lastFinishReason === 'content_filter';
+
       // 汇总本次循环生成的 tool_calls
       const finalToolCalls = Array.from(toolCallsMap.values())
         .filter((tc) => tc.name)
@@ -558,57 +572,9 @@ ${hostDescriptions}
         }));
       }
 
-      // 结论阶段的流式累积：结果同样实时呈现，异常不再被静默吞掉
-      const collectConclusionLine = (
-        lines: string[],
-        onFinish: (reason: string) => void
-      ): string | null => {
-        let latestFinish: string | null = null;
-        let updated = false;
-
-        for (const line of lines) {
-          const parsedLine = parseSseDataLine(line);
-          if (!parsedLine) continue;
-          if (parsedLine.error) {
-            throw new Error(parsedLine.error);
-          }
-          if (parsedLine.reasoning) {
-            loopThinking += parsedLine.reasoning;
-            updated = true;
-          }
-          if (parsedLine.content) {
-            const parsedThink = parseThinkTag(parsedLine.content, thinkState);
-            thinkState = parsedThink.state;
-            loopThinking += parsedThink.thinking;
-            loopContent += parsedThink.content;
-            updated = true;
-          }
-          if (parsedLine.finishReason) {
-            latestFinish = parsedLine.finishReason;
-            onFinish(parsedLine.finishReason);
-          }
-        }
-
-        if (updated) {
-          const mergedThinking = accumulatedThinking
-            ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
-            : loopThinking;
-          const mergedContent = accumulatedContent
-            ? `${accumulatedContent}\n\n${loopContent}`.trim()
-            : loopContent;
-          wsStore.updateLastMessage(wsId, (m) => ({
-            ...m,
-            thinking: mergedThinking || m.thinking,
-            content: mergedContent,
-          }));
-        }
-
-        return latestFinish;
-      };
-
       if (finalToolCalls.length === 0) {
         // 无更多工具调用
-        // 已执行过工具但尚未产出结构化结论时，补齐上下文并显式请求模型输出最终结论报告
+        // 已执行过工具但结论缺失/不完整（字段不全或被截断）时，显式请求模型补充最终结论
         if (
           toolCallItems.length > 0 &&
           !signal.aborted &&
@@ -619,10 +585,54 @@ ${hostDescriptions}
           loopThinking = '';
           loopContent = '';
           thinkState = { inThink: false, pending: '' };
+          // 预览基于去掉残句结论的正文，避免失败轮次的半句结论残留在界面
+          const conclusionBase = isTrailingConclusionComplete(accumulatedContent)
+            ? accumulatedContent
+            : dropIncompleteConclusion(accumulatedContent);
 
+          let reportContent = '';
           for (let attempt = 0; attempt <= CONCLUSION_RETRY_TIMES; attempt++) {
+            // 每个 attempt 使用独立缓冲：失败的残句直接丢弃，不拼接进最终结论
+            let attemptContent = '';
             let summaryBuffer = '';
             let summaryFinishReason: string | undefined;
+
+            const collectAttempt = (lines: string[]) => {
+              for (const line of lines) {
+                const parsedLine = parseSseDataLine(line);
+                if (!parsedLine) continue;
+                if (parsedLine.error) {
+                  throw new Error(parsedLine.error);
+                }
+                if (parsedLine.reasoning) {
+                  loopThinking += parsedLine.reasoning;
+                }
+                if (parsedLine.content) {
+                  const parsedThink = parseThinkTag(parsedLine.content, thinkState);
+                  thinkState = parsedThink.state;
+                  loopThinking += parsedThink.thinking;
+                  attemptContent += parsedThink.content;
+                }
+                if (parsedLine.finishReason) {
+                  summaryFinishReason = parsedLine.finishReason;
+                }
+              }
+
+              if (attemptContent.trim()) {
+                const mergedThinking = accumulatedThinking
+                  ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
+                  : loopThinking;
+                const mergedContent = conclusionBase
+                  ? `${conclusionBase}\n\n${attemptContent}`.trim()
+                  : attemptContent;
+                wsStore.updateLastMessage(wsId, (m) => ({
+                  ...m,
+                  thinking: mergedThinking || m.thinking,
+                  content: mergedContent,
+                }));
+              }
+            };
+
             try {
               await streamChatCompletion(
                 baseUrl,
@@ -638,42 +648,44 @@ ${hostDescriptions}
                   summaryBuffer += chunkText;
                   const lines = summaryBuffer.split('\n');
                   summaryBuffer = lines.pop() || '';
-                  const finish = collectConclusionLine(lines, (reason) => {
-                    summaryFinishReason = reason;
-                  });
-                  if (finish) summaryFinishReason = finish;
+                  collectAttempt(lines);
                 },
                 wsId
               );
               if (summaryBuffer.trim()) {
-                const finish = collectConclusionLine([summaryBuffer.trim()], (reason) => {
-                  summaryFinishReason = reason;
-                });
-                if (finish) summaryFinishReason = finish;
+                collectAttempt([summaryBuffer.trim()]);
               }
-              flushPending();
             } catch (err: any) {
               if (signal.aborted) break;
-              // 最后一次重试仍失败才交由确定性兜底，避免静默无结论
+              // 最后一次重试仍失败才交由确定性兜底，同时保留失败说明避免静默
               if (attempt === CONCLUSION_RETRY_TIMES) {
-                loopContent += `\n\n> 结论请求失败: ${err?.message || err}`;
+                conclusionFinishNote = `> 结论请求失败: ${err?.message || err}`;
               }
               continue;
             }
 
             if (signal.aborted) break;
 
-            const retryNote = describeFinishReason(summaryFinishReason);
-            if (retryNote) {
-              loopContent += `\n\n${retryNote}`;
+            const attemptTruncated =
+              summaryFinishReason === 'length' || summaryFinishReason === 'content_filter';
+            const attemptComplete = isConclusionComplete(attemptContent, {
+              truncated: attemptTruncated,
+            });
+
+            // 内容不完整时保留本轮结果用于最后兜底，字段齐全才采纳并停止重试
+            if (attemptContent.trim()) {
+              reportContent = attemptContent.trim();
+              const retryNote = describeFinishReason(summaryFinishReason);
+              if (retryNote && !attemptComplete) {
+                conclusionFinishNote = retryNote;
+              }
             }
-            if (loopContent.trim() || hasConclusionReport(loopContent)) break;
+            if (attemptComplete) break;
           }
 
-          if (loopContent.trim()) {
-            accumulatedContent = accumulatedContent.trim()
-              ? `${accumulatedContent.trim()}\n\n${loopContent.trim()}`
-              : loopContent.trim();
+          if (reportContent.trim()) {
+            accumulatedContent = upsertConclusion(accumulatedContent, reportContent);
+            lastSegmentTruncated = !isTrailingConclusionComplete(accumulatedContent);
             wsStore.updateLastMessage(wsId, (m) => ({
               ...m,
               content: accumulatedContent,
@@ -681,14 +693,17 @@ ${hostDescriptions}
           }
         }
 
-        // 兜底闭环：模型未产出结构化结论时，基于真实执行状态生成结论，杜绝静默空答
+        // 兜底闭环：模型未产出完整结论时，基于真实执行状态补齐，杜绝静默空答或残句结论
         if (
           !signal.aborted &&
           toolCallItems.length > 0 &&
           !hasFreshConclusion()
         ) {
           const fallback = buildDeterministicConclusion(toolCallItems);
-          accumulatedContent = appendConclusionSafely(accumulatedContent, fallback);
+          accumulatedContent = upsertConclusion(accumulatedContent, fallback);
+          if (conclusionFinishNote && !accumulatedContent.includes(conclusionFinishNote)) {
+            accumulatedContent = `${accumulatedContent}\n\n${conclusionFinishNote}`;
+          }
           wsStore.updateLastMessage(wsId, (m) => ({
             ...m,
             content: accumulatedContent,
@@ -858,10 +873,10 @@ ${hostDescriptions}
       conclusionBaseline = accumulatedContent.length;
     }
 
-    // 轮次耗尽闭环：达到最大循环仍无结构化结论时，依据真实执行状态补齐，避免静默结束
+    // 轮次耗尽闭环：达到最大循环仍无完整结论时，依据真实执行状态补齐，避免静默结束
     if (!signal.aborted && toolCallItems.length > 0 && !hasFreshConclusion()) {
       const fallback = buildDeterministicConclusion(toolCallItems);
-      accumulatedContent = appendConclusionSafely(accumulatedContent, fallback);
+      accumulatedContent = upsertConclusion(accumulatedContent, fallback);
       wsStore.updateLastMessage(wsId, (m) => ({
         ...m,
         content: accumulatedContent,
@@ -883,11 +898,11 @@ ${hostDescriptions}
     } else {
       // 执行异常时仍需给出闭环结论：保留真实执行状态汇总并追加异常原因
       const errorNote = `任务执行异常: ${err?.message || err}`;
-      const closure =
-        toolCallItems.length > 0 && !hasFreshConclusion()
-          ? buildDeterministicConclusion(toolCallItems)
-          : '';
       wsStore.updateLastMessage(wsId, (m) => {
+        const closure =
+          toolCallItems.length > 0 && !hasFreshConclusion()
+            ? buildDeterministicConclusion(toolCallItems)
+            : '';
         const body = appendConclusionSafely(m.content || '', closure);
         return {
           ...m,
