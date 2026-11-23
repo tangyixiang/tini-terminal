@@ -6,20 +6,38 @@ export interface TerminalSessionOptions {
   tab: TerminalTab;
   onOutput: (data: string) => void;
   onConnectedChange?: (connected: boolean) => void;
+  onLatencyChange?: (latencyMs: number | null) => void;
+  onInputError?: (err: Error) => void;
+}
+
+interface TerminalChannelPayload {
+  session_id: string;
+  data: string;
+  closed?: boolean;
+  latency_ms?: number | null;
+  generation?: number;
+}
+
+interface SshConnectResult {
+  latency_ms: number;
+  generation: number;
 }
 
 export class TerminalSession {
   private tab: TerminalTab;
   private onOutput: (data: string) => void;
   private onConnectedChange?: (connected: boolean) => void;
-  private channel: Channel<{ session_id: string; data: string }> | null = null;
+  private onLatencyChange?: (latencyMs: number | null) => void;
+  private onInputError?: (err: Error) => void;
+  private channel: Channel<TerminalChannelPayload> | null = null;
   private inputStream: TerminalInputStream;
+  private outputListeners = new Set<(chunk: string) => void>();
   private isConnected = false;
   private isConnecting = false;
   private isDisposed = false;
+  private currentGeneration = 0;
   private lastCols = 0;
   private lastRows = 0;
-  /** 待发送的目标尺寸，保证 resize 请求串行且只保留最后一次 */
   private pendingSize: { cols: number; rows: number } | null = null;
   private isResizing = false;
 
@@ -27,10 +45,27 @@ export class TerminalSession {
     this.tab = options.tab;
     this.onOutput = options.onOutput;
     this.onConnectedChange = options.onConnectedChange;
+    this.onLatencyChange = options.onLatencyChange;
+    this.onInputError = options.onInputError;
 
-    this.inputStream = new TerminalInputStream(async (chunk: string) => {
-      await this.transmitInput(chunk);
-    });
+    this.inputStream = new TerminalInputStream(
+      async (chunk: string) => {
+        await this.transmitInput(chunk);
+      },
+      (err) => {
+        const msg = err.message || '';
+        if (
+          msg.includes('未找到') ||
+          msg.includes('已关闭') ||
+          msg.includes('not found') ||
+          msg.includes('closed')
+        ) {
+          this.isConnected = false;
+          this.onConnectedChange?.(false);
+        }
+        this.onInputError?.(err);
+      }
+    );
   }
 
   public updateTab(tab: TerminalTab): void {
@@ -39,6 +74,17 @@ export class TerminalSession {
 
   public getConnected(): boolean {
     return this.isConnected;
+  }
+
+  public getGeneration(): number {
+    return this.currentGeneration;
+  }
+
+  public subscribeOutput(listener: (chunk: string) => void): () => void {
+    this.outputListeners.add(listener);
+    return () => {
+      this.outputListeners.delete(listener);
+    };
   }
 
   public async connect(cols = 80, rows = 24): Promise<void> {
@@ -59,10 +105,32 @@ export class TerminalSession {
     }
 
     try {
-      const channel = new Channel<{ session_id: string; data: string }>();
+      const channel = new Channel<TerminalChannelPayload>();
+      let boundGeneration = 0;
+
       channel.onmessage = (payload) => {
-        if (!this.isDisposed) {
+        if (this.isDisposed) return;
+        // 隔离旧代次会话的延迟事件，防止误将新连接置为断开
+        if (
+          typeof payload.generation === 'number' &&
+          payload.generation > 0 &&
+          boundGeneration > 0 &&
+          payload.generation !== boundGeneration
+        ) {
+          return;
+        }
+        if (payload.data) {
           this.onOutput(payload.data);
+          for (const listener of this.outputListeners) {
+            try {
+              listener(payload.data);
+            } catch {}
+          }
+        }
+        if (payload.closed) {
+          this.isConnected = false;
+          this.onConnectedChange?.(false);
+          this.onLatencyChange?.(null);
         }
       };
       this.channel = channel;
@@ -72,7 +140,7 @@ export class TerminalSession {
           `\x1b[90m正在建立 SSH 连接 ${this.tab.server.host}:${this.tab.server.port} (${this.tab.server.username})...\x1b[0m\r\n`
         );
 
-        await invoke('connect_ssh_terminal', {
+        const result = await invoke<SshConnectResult | number>('connect_ssh_terminal', {
           sessionId: this.tab.sessionId,
           options: {
             host: this.tab.server.host,
@@ -86,13 +154,24 @@ export class TerminalSession {
           },
           channel,
         });
+
+        if (typeof result === 'object' && result !== null) {
+          boundGeneration = result.generation || 0;
+          this.currentGeneration = boundGeneration;
+          this.onLatencyChange?.(typeof result.latency_ms === 'number' ? result.latency_ms : null);
+        } else {
+          this.onLatencyChange?.(typeof result === 'number' ? result : null);
+        }
       } else {
-        await invoke('start_local_terminal', {
+        const gen = await invoke<number>('start_local_terminal', {
           sessionId: this.tab.sessionId,
           cols,
           rows,
           channel,
         });
+        boundGeneration = typeof gen === 'number' ? gen : 0;
+        this.currentGeneration = boundGeneration;
+        this.onLatencyChange?.(0);
       }
 
       this.isConnected = true;
@@ -101,6 +180,7 @@ export class TerminalSession {
       this.isConnected = false;
       this.onOutput(`\r\n\x1b[31m[连接失败] ${err?.message || err}\x1b[0m\r\n`);
       this.onConnectedChange?.(false);
+      this.onLatencyChange?.(null);
     } finally {
       this.isConnecting = false;
     }
@@ -110,7 +190,6 @@ export class TerminalSession {
     this.isConnected = false;
     this.isConnecting = false;
     this.pendingSize = null;
-    // 重连后 PTY 尺寸会回到初始值，必须允许再次下发当前视口尺寸
     this.lastCols = 0;
     this.lastRows = 0;
     this.inputStream.clear();
@@ -121,6 +200,7 @@ export class TerminalSession {
     }
 
     this.onConnectedChange?.(false);
+    this.onLatencyChange?.(null);
   }
 
   public async closeBackend(): Promise<void> {
@@ -139,7 +219,6 @@ export class TerminalSession {
   public async retry(cols = 80, rows = 24): Promise<void> {
     await this.disconnect();
     await this.closeBackend();
-    // 延迟 80ms 确保底层的网络 socket 与 PTY 进程释放完成
     await new Promise((resolve) => setTimeout(resolve, 80));
     await this.connect(cols, rows);
   }
@@ -159,8 +238,6 @@ export class TerminalSession {
 
     if (!window.__TAURI_INTERNALS__ || !this.isConnected) return;
 
-    // 串行化尺寸同步：并发 invoke 的返回顺序不确定，
-    // 若旧尺寸后到达会让远端 PTY 停留在错误列数，导致提示符折行覆盖上一行。
     this.pendingSize = { cols, rows };
     if (this.isResizing) return;
 
@@ -189,6 +266,7 @@ export class TerminalSession {
     this.isDisposed = true;
     this.isConnected = false;
     this.isConnecting = false;
+    this.outputListeners.clear();
     this.inputStream.dispose();
 
     if (this.channel) {
@@ -200,16 +278,13 @@ export class TerminalSession {
   private async transmitInput(chunk: string): Promise<void> {
     if (this.isDisposed) return;
 
-    // 若会话尚在建立中，等待连接就绪，避免过早输入导致丢字或未找到会话
     if (this.isConnecting) {
       for (let i = 0; i < 40 && this.isConnecting; i++) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
 
-    if (!window.__TAURI_INTERNALS__) {
-      return;
-    }
+    if (!window.__TAURI_INTERNALS__) return;
 
     await Promise.race([
       invoke('send_terminal_input', {

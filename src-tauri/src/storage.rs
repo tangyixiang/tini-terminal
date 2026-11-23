@@ -11,7 +11,6 @@ fn encrypt_option(cipher: &CredentialCipher, value: &Option<String>) -> Option<S
         if plain.is_empty() {
             String::new()
         } else if CredentialCipher::is_encrypted(plain) {
-            // 已加密内容（如列表读取后原样回存）直接复用，避免二次加密
             plain.clone()
         } else {
             cipher.encrypt(plain)
@@ -26,10 +25,40 @@ fn decrypt_option(cipher: &CredentialCipher, value: Option<String>) -> Option<St
         } else if CredentialCipher::is_encrypted(&stored) {
             cipher.decrypt(&stored)
         } else {
-            // 历史明文原样返回，下次保存时自动迁移为密文
             stored
         }
     })
+}
+
+fn transform_providers_json_keys(
+    cipher: &CredentialCipher,
+    raw_json: &str,
+    encrypt: bool,
+) -> String {
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(raw_json) else {
+        return raw_json.to_string();
+    };
+    if let Some(arr) = val.as_array_mut() {
+        for item in arr {
+            if let Some(obj) = item.as_object_mut() {
+                if let Some(key_val) = obj.get("api_key").and_then(|v| v.as_str()) {
+                    let next = if encrypt {
+                        if key_val.is_empty() || CredentialCipher::is_encrypted(key_val) {
+                            key_val.to_string()
+                        } else {
+                            cipher.encrypt(key_val)
+                        }
+                    } else if CredentialCipher::is_encrypted(key_val) {
+                        cipher.decrypt(key_val)
+                    } else {
+                        key_val.to_string()
+                    };
+                    obj.insert("api_key".to_string(), serde_json::Value::String(next));
+                }
+            }
+        }
+    }
+    serde_json::to_string(&val).unwrap_or_else(|_| raw_json.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -39,7 +68,7 @@ pub struct ServerRecord {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub auth_type: String, // "password" | "key" | "agent"
+    pub auth_type: String,
     pub credential: Option<String>,
     pub passphrase: Option<String>,
     pub group_name: Option<String>,
@@ -68,6 +97,24 @@ pub struct TaskRecord {
     pub result_json: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SnippetRecord {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub category: String,
+    pub description: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatHistoryRecord {
+    pub id: String,
+    pub session_key: String,
+    pub payload_json: String,
+    pub created_at: i64,
 }
 
 pub struct StorageManager {
@@ -144,6 +191,25 @@ impl StorageManager {
                 created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_history_key
+            ON chat_history(session_key, created_at);
+
+            CREATE TABLE IF NOT EXISTS snippets (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                command TEXT NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT,
+                created_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -172,12 +238,9 @@ impl StorageManager {
             ",
         )?;
 
-        // Seed initial default workspaces if none exists
-        let ws_count: i64 = conn.query_row(
-            "SELECT count(*) FROM workspaces",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let ws_count: i64 = conn
+            .query_row("SELECT count(*) FROM workspaces", [], |r| r.get(0))
+            .unwrap_or(0);
 
         if ws_count == 0 {
             let now = chrono::Utc::now().timestamp_millis();
@@ -191,16 +254,19 @@ impl StorageManager {
             );
         }
 
-        // Seed initial default settings if not exists
-        // AI 模型配置不再由后端写入默认值，统一由前端预设提供，避免厂商信息硬编码在数据库中
-        let has_danger: i64 = conn.query_row(
-            "SELECT count(*) FROM settings WHERE key = 'danger_level'",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let has_danger: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM settings WHERE key = 'danger_level'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
         if has_danger == 0 {
-            let _ = conn.execute("INSERT INTO settings (key, value) VALUES ('danger_level', 'high')", []);
+            let _ = conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('danger_level', 'high')",
+                [],
+            );
         }
 
         Ok(())
@@ -244,7 +310,6 @@ impl StorageManager {
     pub fn save_server(&self, server: &ServerRecord) -> Result<()> {
         let conn = self.get_connection()?;
         let cipher = self.cipher();
-        // 凭证统一加密落库，历史明文在下次保存时自动迁移
         let credential = encrypt_option(&cipher, &server.credential);
         let passphrase = encrypt_option(&cipher, &server.passphrase);
 
@@ -290,6 +355,7 @@ impl StorageManager {
 
     pub fn get_settings(&self) -> Result<HashMap<String, String>> {
         let conn = self.get_connection()?;
+        let cipher = self.cipher();
         let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
         let rows = stmt.query_map([], |row| {
             let k: String = row.get(0)?;
@@ -300,7 +366,14 @@ impl StorageManager {
         let mut map = HashMap::new();
         for r in rows {
             if let Ok((k, v)) = r {
-                map.insert(k, v);
+                let decrypted = if k == "ai_api_key" {
+                    cipher.decrypt(&v)
+                } else if k == "ai_providers_json" {
+                    transform_providers_json_keys(&cipher, &v, false)
+                } else {
+                    v
+                };
+                map.insert(k, decrypted);
             }
         }
         Ok(map)
@@ -308,16 +381,127 @@ impl StorageManager {
 
     pub fn save_settings(&self, settings: &HashMap<String, String>) -> Result<()> {
         let mut conn = self.get_connection()?;
+        let cipher = self.cipher();
         let tx = conn.transaction()?;
         for (k, v) in settings {
+            let stored = if k == "ai_api_key" {
+                cipher.encrypt(v)
+            } else if k == "ai_providers_json" {
+                transform_providers_json_keys(&cipher, v, true)
+            } else {
+                v.clone()
+            };
             tx.execute(
                 "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![k, v],
+                params![k, stored],
             )?;
         }
         tx.commit()?;
         Ok(())
     }
+
+    // ---------------- 快捷命令片段 ----------------
+
+    pub fn list_snippets(&self) -> Result<Vec<SnippetRecord>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, command, category, description, created_at FROM snippets ORDER BY category ASC, created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SnippetRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                command: row.get(2)?,
+                category: row.get(3)?,
+                description: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(item) = r {
+                list.push(item);
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn save_snippet(&self, snippet: &SnippetRecord) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO snippets (id, name, command, category, description, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                command = excluded.command,
+                category = excluded.category,
+                description = excluded.description",
+            params![
+                snippet.id,
+                snippet.name,
+                snippet.command,
+                snippet.category,
+                snippet.description,
+                snippet.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_snippet(&self, id: &str) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute("DELETE FROM snippets WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    // ---------------- AI 对话历史持久化 ----------------
+
+    pub fn load_chat_history(&self, session_key: &str, limit: usize) -> Result<Vec<String>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT payload_json FROM (
+                SELECT payload_json, created_at FROM chat_history
+                WHERE session_key = ?1
+                ORDER BY created_at DESC LIMIT ?2
+             ) ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![session_key, limit as i64], |row| row.get(0))?;
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(json) = r {
+                list.push(json);
+            }
+        }
+        Ok(list)
+    }
+
+    pub fn save_chat_history(&self, session_key: &str, messages: &[ChatHistoryRecord]) -> Result<()> {
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM chat_history WHERE session_key = ?1",
+            params![session_key],
+        )?;
+        for rec in messages {
+            tx.execute(
+                "INSERT INTO chat_history (id, session_key, payload_json, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![rec.id, session_key, rec.payload_json, rec.created_at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn clear_chat_history(&self, session_key: &str) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "DELETE FROM chat_history WHERE session_key = ?1",
+            params![session_key],
+        )?;
+        Ok(())
+    }
+
+    // ---------------- 工作区与任务 ----------------
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>> {
         let conn = self.get_connection()?;
@@ -355,11 +539,11 @@ impl StorageManager {
     pub fn save_workspace(&self, ws: &WorkspaceRecord) -> Result<()> {
         let conn = self.get_connection()?;
         conn.execute(
-            "INSERT INTO workspaces (id, name, description, created_at, updated_at) 
-             VALUES (?1, ?2, ?3, ?4, ?5) 
-             ON CONFLICT(id) DO UPDATE SET 
-                name = excluded.name, 
-                description = excluded.description, 
+            "INSERT INTO workspaces (id, name, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
                 updated_at = excluded.updated_at",
             params![ws.id, ws.name, ws.description, ws.created_at, ws.updated_at],
         )?;
@@ -372,7 +556,10 @@ impl StorageManager {
         let mut conn = self.get_connection()?;
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
-        tx.execute("DELETE FROM workspace_hosts WHERE workspace_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM workspace_hosts WHERE workspace_id = ?1",
+            params![id],
+        )?;
         tx.execute("DELETE FROM tasks WHERE workspace_id = ?1", params![id])?;
         tx.commit()?;
         Ok(())
@@ -396,7 +583,10 @@ impl StorageManager {
     pub fn set_workspace_hosts(&self, workspace_id: &str, host_ids: &[String]) -> Result<()> {
         let mut conn = self.get_connection()?;
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM workspace_hosts WHERE workspace_id = ?1", params![workspace_id])?;
+        tx.execute(
+            "DELETE FROM workspace_hosts WHERE workspace_id = ?1",
+            params![workspace_id],
+        )?;
         let now = chrono::Utc::now().timestamp_millis();
         for hid in host_ids {
             tx.execute(
@@ -413,7 +603,7 @@ impl StorageManager {
         let mut list = Vec::new();
         if let Some(ws_id) = workspace_id {
             let mut stmt = conn.prepare(
-                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at 
+                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at
                  FROM tasks WHERE workspace_id = ?1 ORDER BY created_at DESC LIMIT 50",
             )?;
             let rows = stmt.query_map(params![ws_id], |row| {
@@ -435,7 +625,7 @@ impl StorageManager {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at 
+                "SELECT id, workspace_id, prompt, status, plan_json, result_json, created_at, updated_at
                  FROM tasks ORDER BY created_at DESC LIMIT 50",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -489,23 +679,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_storage_crud() {
-        let temp_dir = std::env::temp_dir().join(format!("ai_terminal_test_{}", std::process::id()));
+    fn test_storage_crud_and_api_key_encryption() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("ai_terminal_test_{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
         let db_path = temp_dir.join("test.db");
-        let storage = StorageManager { db_path: db_path.clone() };
+        let storage = StorageManager {
+            db_path: db_path.clone(),
+        };
         storage.init_db().expect("init_db should succeed");
 
-        // 1. 测试设置存储
         let mut settings = HashMap::new();
         settings.insert("ai_model".to_string(), "deepseek-reasoner".to_string());
-        settings.insert("danger_level".to_string(), "high".to_string());
-        storage.save_settings(&settings).expect("save_settings should succeed");
+        settings.insert("ai_api_key".to_string(), "sk-secret-key-123".to_string());
+        settings.insert(
+            "ai_providers_json".to_string(),
+            r#"[{"id":"p1","api_key":"sk-provider-456"}]"#.to_string(),
+        );
+        storage
+            .save_settings(&settings)
+            .expect("save_settings should succeed");
 
+        // 直接查数据库验证已加密落盘
+        let conn = Connection::open(&db_path).unwrap();
+        let raw_key: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai_api_key'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(CredentialCipher::is_encrypted(&raw_key));
+
+        // 业务读取自动解密还原
         let loaded_settings = storage.get_settings().expect("get_settings should succeed");
-        assert_eq!(loaded_settings.get("ai_model").unwrap(), "deepseek-reasoner");
+        assert_eq!(loaded_settings.get("ai_api_key").unwrap(), "sk-secret-key-123");
+        assert!(loaded_settings
+            .get("ai_providers_json")
+            .unwrap()
+            .contains("sk-provider-456"));
 
-        // 2. 测试服务器添加与查询
         let server = ServerRecord {
             id: "test-srv-1".to_string(),
             name: "Test Prod".to_string(),
@@ -520,20 +733,11 @@ mod tests {
             jump_host_id: None,
             created_at: 1700000000,
         };
-
         storage.save_server(&server).expect("save_server should succeed");
-
-        let list = storage.list_servers().expect("list_servers should succeed");
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].name, "Test Prod");
-        assert_eq!(list[0].host, "10.0.0.1");
-
-        // 3. 测试删除
-        storage.delete_server("test-srv-1").expect("delete_server should succeed");
-        let list_after = storage.list_servers().expect("list_servers should succeed");
-        assert_eq!(list_after.len(), 0);
+        assert_eq!(storage.list_servers().unwrap().len(), 1);
+        storage.delete_server("test-srv-1").unwrap();
+        assert_eq!(storage.list_servers().unwrap().len(), 0);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
-

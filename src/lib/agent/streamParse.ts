@@ -44,6 +44,32 @@ function extractErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function extractReasoning(obj: any): string | undefined {
+  if (!obj || typeof obj !== 'object') return undefined;
+  if (typeof obj.reasoning_content === 'string' && obj.reasoning_content) {
+    return obj.reasoning_content;
+  }
+  if (typeof obj.reasoning === 'string' && obj.reasoning) {
+    return obj.reasoning;
+  }
+  return undefined;
+}
+
+function extractToolCalls(rawToolCalls: any): ParsedToolCallDelta[] | undefined {
+  if (!Array.isArray(rawToolCalls) || rawToolCalls.length === 0) return undefined;
+  return rawToolCalls.map((tc: any, idx: number) => ({
+    index: typeof tc.index === 'number' ? tc.index : idx,
+    id: tc.id,
+    name: tc.function?.name,
+    arguments:
+      typeof tc.function?.arguments === 'string'
+        ? tc.function.arguments
+        : tc.function?.arguments != null
+          ? JSON.stringify(tc.function.arguments)
+          : undefined,
+  }));
+}
+
 /**
  * 解析 SSE 单行 data 载荷
  * 返回 null 表示该行不含可消费的有效数据（如心跳、[DONE]）
@@ -74,27 +100,24 @@ export function parseSseDataLine(line: string): StreamParseResult | null {
   const delta = choice.delta;
 
   if (delta) {
-    if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-      result.reasoning = delta.reasoning_content;
-    }
+    const reasoning = extractReasoning(delta);
+    if (reasoning) result.reasoning = reasoning;
     if (typeof delta.content === 'string' && delta.content) {
       result.content = delta.content;
     }
-    if (Array.isArray(delta.tool_calls)) {
-      result.toolCalls = delta.tool_calls.map((tc: any) => ({
-        index: tc.index ?? 0,
-        id: tc.id,
-        name: tc.function?.name,
-        arguments: tc.function?.arguments,
-      }));
-    }
+    const toolCalls = extractToolCalls(delta.tool_calls);
+    if (toolCalls) result.toolCalls = toolCalls;
   }
 
   // 部分实现把非流式结果按 choices[0].message 返回
   if (!delta && choice.message) {
+    const reasoning = extractReasoning(choice.message);
+    if (reasoning) result.reasoning = reasoning;
     if (typeof choice.message.content === 'string' && choice.message.content) {
       result.content = choice.message.content;
     }
+    const toolCalls = extractToolCalls(choice.message.tool_calls);
+    if (toolCalls) result.toolCalls = toolCalls;
   }
 
   if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
@@ -107,7 +130,7 @@ export function parseSseDataLine(line: string): StreamParseResult | null {
 
 /**
  * 解析非 SSE 的完整 JSON 响应体
- * 若响应体本身携带错误，或模型返回了完整 message，则一次给出结果
+ * 若响应体本身携带错误，或模型返回了完整 message（含 tool_calls），则一次给出结果
  */
 export function parseNonSseBody(body: string): StreamParseResult | null {
   const trimmed = body.trim();
@@ -133,12 +156,13 @@ export function parseNonSseBody(body: string): StreamParseResult | null {
   const result: StreamParseResult = {};
   const message = choice.message;
   if (message) {
-    if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
-      result.reasoning = message.reasoning_content;
-    }
+    const reasoning = extractReasoning(message);
+    if (reasoning) result.reasoning = reasoning;
     if (typeof message.content === 'string' && message.content) {
       result.content = message.content;
     }
+    const toolCalls = extractToolCalls(message.tool_calls);
+    if (toolCalls) result.toolCalls = toolCalls;
   }
   if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
     result.finishReason = choice.finish_reason;

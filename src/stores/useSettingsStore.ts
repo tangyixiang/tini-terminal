@@ -313,9 +313,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       if (window.__TAURI_INTERNALS__) {
         invoke('set_window_theme', { isDark: targetTheme.isDark }).catch(() => {});
+        // 仅提交字符串键值对，避免将 providers 对象数组传入 HashMap<String, String> 触发反序列化失败
         await invoke('save_settings', {
           settings: {
-            ...get().settings,
             theme_id: id,
           },
         });

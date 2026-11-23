@@ -1,9 +1,10 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::ipc::Channel;
+use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestAiRequest {
@@ -33,44 +34,80 @@ pub struct AiStreamEvent {
     pub data: Option<String>,
 }
 
+struct CancelEntry {
+    aborted: bool,
+    notify: Arc<Notify>,
+}
+
 #[derive(Clone)]
 pub struct AgentService {
-    aborted_requests: Arc<Mutex<HashSet<String>>>,
+    cancel_map: Arc<Mutex<HashMap<String, CancelEntry>>>,
     client: Client,
 }
 
 impl AgentService {
     pub fn new() -> Self {
-        // 仅限制连接与单次读取间隔：推理型模型在输出首个 token 前可能长时间静默，
-        // 因此读超时需足够宽松，避免长思考被整体中断而丢失结论
+        // 推理型模型首包前可能长时间静默，读超时保持宽松，由取消信号随时中断
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .read_timeout(Duration::from_secs(600))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
-            aborted_requests: Arc::new(Mutex::new(HashSet::new())),
+            cancel_map: Arc::new(Mutex::new(HashMap::new())),
             client,
         }
     }
 
+    fn register_cancel(&self, request_id: &str) -> (Arc<Notify>, bool) {
+        if let Ok(mut map) = self.cancel_map.lock() {
+            if let Some(existing) = map.get(request_id) {
+                return (Arc::clone(&existing.notify), existing.aborted);
+            }
+            let notify = Arc::new(Notify::new());
+            map.insert(
+                request_id.to_string(),
+                CancelEntry {
+                    aborted: false,
+                    notify: Arc::clone(&notify),
+                },
+            );
+            (notify, false)
+        } else {
+            (Arc::new(Notify::new()), false)
+        }
+    }
+
     pub fn abort_chat(&self, request_id: &str) {
-        if let Ok(mut set) = self.aborted_requests.lock() {
-            set.insert(request_id.to_string());
+        if let Ok(mut map) = self.cancel_map.lock() {
+            if let Some(entry) = map.get_mut(request_id) {
+                entry.aborted = true;
+                entry.notify.notify_waiters();
+            } else {
+                let notify = Arc::new(Notify::new());
+                notify.notify_waiters();
+                map.insert(
+                    request_id.to_string(),
+                    CancelEntry {
+                        aborted: true,
+                        notify,
+                    },
+                );
+            }
         }
     }
 
     fn is_aborted(&self, request_id: &str) -> bool {
-        if let Ok(set) = self.aborted_requests.lock() {
-            set.contains(request_id)
+        if let Ok(map) = self.cancel_map.lock() {
+            map.get(request_id).map(|e| e.aborted).unwrap_or(false)
         } else {
             false
         }
     }
 
     fn clear_aborted(&self, request_id: &str) {
-        if let Ok(mut set) = self.aborted_requests.lock() {
-            set.remove(request_id);
+        if let Ok(mut map) = self.cancel_map.lock() {
+            map.remove(request_id);
         }
     }
 
@@ -138,17 +175,39 @@ impl AgentService {
         req: StreamAiChatRequest,
         channel: Channel<AiStreamEvent>,
     ) -> Result<(), String> {
-        self.clear_aborted(&req.request_id);
+        let (cancel_notify, already_aborted) = self.register_cancel(&req.request_id);
+        if already_aborted {
+            self.clear_aborted(&req.request_id);
+            let _ = channel.send(AiStreamEvent {
+                event_type: "done".to_string(),
+                data: None,
+            });
+            return Ok(());
+        }
+
         let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
         let mut request = self.client.post(&url).json(&req.body);
         if !req.api_key.trim().is_empty() {
             request = request.header("Authorization", format!("Bearer {}", req.api_key.trim()));
         }
 
-        let resp_result = request.send().await;
+        // 发送阶段同样监听中止信号，避免推理模型首包等待期无法立即取消
+        let resp_result = tokio::select! {
+            _ = cancel_notify.notified() => {
+                self.clear_aborted(&req.request_id);
+                let _ = channel.send(AiStreamEvent {
+                    event_type: "done".to_string(),
+                    data: None,
+                });
+                return Ok(());
+            }
+            res = request.send() => res,
+        };
+
         let mut resp = match resp_result {
             Ok(r) => r,
             Err(e) => {
+                self.clear_aborted(&req.request_id);
                 let err_msg = format!("大模型网络请求失败: {}", e);
                 let _ = channel.send(AiStreamEvent {
                     event_type: "error".to_string(),
@@ -161,6 +220,7 @@ impl AgentService {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let err_body = resp.text().await.unwrap_or_default();
+            self.clear_aborted(&req.request_id);
             let err_msg = format!("LLM API 响应错误 (HTTP {}): {}", status, err_body);
             let _ = channel.send(AiStreamEvent {
                 event_type: "error".to_string(),
@@ -177,7 +237,12 @@ impl AgentService {
                 break;
             }
 
-            match resp.chunk().await {
+            let next_chunk = tokio::select! {
+                _ = cancel_notify.notified() => break,
+                chunk = resp.chunk() => chunk,
+            };
+
+            match next_chunk {
                 Ok(Some(chunk)) => {
                     pending_bytes.extend_from_slice(&chunk);
 
@@ -236,7 +301,6 @@ impl AgentService {
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    // 流式传输中断必须显式上报；区分空闲超时与其他网络错误，避免上层误判为正常完成
                     if !self.is_aborted(&req.request_id) {
                         let reason = if e.is_timeout() {
                             format!(
@@ -293,5 +357,14 @@ mod tests {
         agent.clear_aborted("req-test-1");
         assert!(!agent.is_aborted("req-test-1"));
     }
-}
 
+    #[test]
+    fn test_agent_service_abort_before_register() {
+        let agent = AgentService::new();
+        agent.abort_chat("req-early");
+        let (_notify, already_aborted) = agent.register_cancel("req-early");
+        assert!(already_aborted);
+        agent.clear_aborted("req-early");
+        assert!(!agent.is_aborted("req-early"));
+    }
+}

@@ -4,5 +4,6 @@ pub mod manager;
 pub mod model;
 
 pub use context::SessionContext;
+pub use cwd_tracker::CwdTracker;
 pub use manager::SessionManager;
-pub use model::SessionInfo;
+pub use model::{SessionInfo, SessionKind};

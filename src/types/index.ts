@@ -24,6 +24,30 @@ export interface TerminalTab {
   connected: boolean;
   cols?: number;
   rows?: number;
+  latencyMs?: number | null;
+}
+
+export interface SessionContext {
+  cwd?: string | null;
+  shell?: string | null;
+  user?: string | null;
+  os?: string | null;
+  hostname?: string | null;
+  foreground_process?: string | null;
+  last_command?: string | null;
+  last_exit_code?: number | null;
+  terminal_width: number;
+  terminal_height: number;
+  recent_output: string;
+}
+
+export interface SnippetRecord {
+  id: string;
+  name: string;
+  command: string;
+  category: string;
+  description?: string | null;
+  created_at: number;
 }
 
 export interface AiProviderConfig {
@@ -47,6 +71,9 @@ export interface AiSettings {
 }
 
 export type PermissionMode = 'read_only' | 'ask' | 'full';
+
+/** AI 命令执行通道：isolated 为独立无污染通道，pty 为绑定当前交互终端（继承 su/cd/env/跳板） */
+export type AgentExecutionMode = 'isolated' | 'pty';
 
 export interface ToolCallItem {
   id: string;
@@ -76,6 +103,7 @@ export interface RemoteFileInfo {
   path: string;
   size: number;
   is_dir: boolean;
+  is_symlink?: boolean;
   permissions: number;
   mtime: number;
 }
@@ -85,6 +113,17 @@ export interface SftpListResult {
   files: RemoteFileInfo[];
 }
 
+export interface TransferItem {
+  id: string;
+  type: 'upload' | 'download';
+  fileName: string;
+  transferred: number;
+  total: number;
+  status: 'running' | 'done' | 'failed' | 'cancelled';
+  error?: string;
+  startedAt: number;
+}
+
 export interface SafetyCheckResult {
   is_dangerous: boolean;
   risk_level: 'safe' | 'warning' | 'dangerous';
@@ -92,7 +131,6 @@ export interface SafetyCheckResult {
   message: string;
 }
 
-/** 危险命令拦截等级 */
 export type SafetyLevel = 'high' | 'medium' | 'low';
 
 export interface Workspace {
@@ -151,5 +189,3 @@ export interface WorkspaceAgentState {
   pendingToolCall: ToolCallItem | null;
   approvalResolver: ((allowed: boolean) => void) | null;
 }
-
-

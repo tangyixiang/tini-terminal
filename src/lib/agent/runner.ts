@@ -1,159 +1,40 @@
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { useAgentStore } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
+import { isWindowsPlatform } from '../platform';
+import { getTerminalSnapshot } from '../terminal/ptyBridge';
 import { AGENT_TOOLS, checkSafety, executeToolCall } from './tools';
 import { isReadOnlyCommand, truncateToolResult } from './commandUtils';
 import { resolveAiRuntime, validateAiRuntime } from '../aiProviders';
-import {
-  CONCLUSION_RETRY_TIMES,
-  HISTORY_MESSAGE_LIMIT,
-  MAX_AGENT_LOOPS,
-  STREAM_FLUSH_INTERVAL_MS,
-} from './constants';
-import {
-  describeFinishReason,
-  looksLikeNonSseJson,
-  parseNonSseBody,
-  parseSseDataLine,
-} from './streamParse';
+import { HISTORY_MESSAGE_LIMIT, MAX_AGENT_LOOPS } from './constants';
+import { describeFinishReason } from './streamParse';
 import {
   appendConclusionSafely,
-  buildConclusionMessages,
-  buildConclusionPrompt,
   buildDeterministicConclusion,
   buildHistoryToolResult,
-  dropIncompleteConclusion,
   isConclusionComplete,
   isTrailingConclusionComplete,
-  parseThinkTag,
   sanitizeHistoryContent,
   upsertConclusion,
 } from './summary';
-import type { ToolCallItem } from '../../types';
+import {
+  abortActiveStreamRequest,
+  executeLlmTurn,
+  requestStructuredConclusion,
+} from './streamLoop';
+import type { SessionContext, ToolCallItem } from '../../types';
 
 const abortControllers: Record<string, AbortController> = {};
-const currentRequestIds: Record<string, string> = {};
 
 /** 判断指定会话是否存在进行中的任务 */
 export function isAgentTaskRunning(tabId: string): boolean {
   return Boolean(abortControllers[tabId]);
 }
 
-interface StreamEventPayload {
-  event_type: 'chunk' | 'error' | 'done';
-  data?: string;
-}
-
-async function streamChatCompletion(
-  baseUrl: string,
-  apiKey: string,
-  body: Record<string, unknown>,
-  signal: AbortSignal,
-  onChunk: (chunkText: string) => void,
-  tabId?: string,
-): Promise<void> {
-  if (window.__TAURI_INTERNALS__) {
-    const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
-    if (tabId) currentRequestIds[tabId] = requestId;
-
-    return new Promise<void>((resolve, reject) => {
-      const channel = new Channel<StreamEventPayload>();
-      // 保证 Promise 只被结算一次，避免解析异常后再被 done 事件覆盖
-      let settled = false;
-      const settle = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener('abort', abortHandler);
-        if (tabId) delete currentRequestIds[tabId];
-        fn();
-      };
-
-      const abortHandler = () => {
-        invoke('abort_ai_chat', { requestId }).catch(() => {});
-        settle(resolve);
-      };
-
-      if (signal.aborted) {
-        abortHandler();
-        return;
-      }
-      signal.addEventListener('abort', abortHandler, { once: true });
-
-      channel.onmessage = (event) => {
-        if (settled) return;
-        if (signal.aborted) {
-          settle(resolve);
-          return;
-        }
-        if (event.event_type === 'chunk' && event.data) {
-          // 解析阶段抛出的错误必须转成 Promise 拒绝，否则上层会永久挂起
-          try {
-            onChunk(event.data);
-          } catch (err: any) {
-            invoke('abort_ai_chat', { requestId }).catch(() => {});
-            settle(() => reject(err instanceof Error ? err : new Error(String(err))));
-          }
-        } else if (event.event_type === 'error') {
-          settle(() => reject(new Error(event.data || '大模型网络请求异常')));
-        } else if (event.event_type === 'done') {
-          settle(resolve);
-        }
-      };
-
-      invoke('stream_ai_chat', {
-        req: {
-          request_id: requestId,
-          base_url: baseUrl,
-          api_key: apiKey || '',
-          body,
-        },
-        channel,
-      }).catch((err) => {
-        settle(() => reject(new Error(err?.toString() || '启动大模型网络请求失败')));
-      });
-    });
-  } else {
-    // 浏览器环境兜底
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`LLM API 响应错误 (HTTP ${res.status}): ${errText}`);
-    }
-
-    if (!res.body) {
-      throw new Error('未获取到流式响应数据主体');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-
-    while (true) {
-      if (signal.aborted) {
-        reader.cancel().catch(() => {});
-        break;
-      }
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      onChunk(text);
-    }
-  }
-}
-
 export function abortAgentTask(targetTabId?: string): void {
   const terminalStore = useTerminalStore.getState();
   const tabId = targetTabId || terminalStore.activeTabId;
-
   if (!tabId) return;
 
   const ctrl = abortControllers[tabId];
@@ -161,12 +42,7 @@ export function abortAgentTask(targetTabId?: string): void {
     ctrl.abort();
     delete abortControllers[tabId];
   }
-
-  const reqId = currentRequestIds[tabId];
-  if (reqId && window.__TAURI_INTERNALS__) {
-    invoke('abort_ai_chat', { requestId: reqId }).catch(() => {});
-    delete currentRequestIds[tabId];
-  }
+  abortActiveStreamRequest(`session:${tabId}`);
 
   const agentStore = useAgentStore.getState();
   const session = agentStore.getSessionState(tabId);
@@ -188,16 +64,19 @@ export function abortAgentTask(targetTabId?: string): void {
   });
 }
 
+export interface RunAgentOptions {
+  /** 附加给本轮任务的终端实时上下文（用户、目录、屏幕快照等） */
+  terminalContextPrompt?: string;
+}
 
-
-export async function runAgentTask(userPrompt: string, targetTabId?: string): Promise<void> {
+export async function runAgentTask(
+  userPrompt: string,
+  targetTabId?: string,
+  options?: RunAgentOptions
+): Promise<void> {
   const terminalStore = useTerminalStore.getState();
   const tabId = targetTabId || terminalStore.activeTabId;
-
-  // 无有效终端会话时拒绝执行，避免多个调用共用兜底键导致中止错乱
-  if (!tabId) {
-    return;
-  }
+  if (!tabId) return;
 
   if (abortControllers[tabId]) {
     abortAgentTask(tabId);
@@ -206,6 +85,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
   const abortCtrl = new AbortController();
   abortControllers[tabId] = abortCtrl;
   const signal = abortCtrl.signal;
+  const scopeKey = `session:${tabId}`;
 
   const agentStore = useAgentStore.getState();
   const settingsStore = useSettingsStore.getState();
@@ -217,63 +97,107 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
   }
   const sessionId = activeTab.sessionId;
 
-  // 1. 获取该会话专属历史消息（最多保留最近若干条）
   const sessionState = agentStore.getSessionState(tabId);
   const historyMessages = sessionState.messages.slice(-HISTORY_MESSAGE_LIMIT);
 
-  // 2. 添加用户消息到当前会话
-  const userMsgId = 'msg-' + Date.now();
   agentStore.addMessage(tabId, {
-    id: userMsgId,
+    id: 'msg-' + Date.now(),
     role: 'user',
     content: userPrompt,
     timestamp: Date.now(),
   });
-
   agentStore.setIsThinking(tabId, true);
 
-  // 3. 准备系统提示词与历史记录
-  const systemPrompt = `你是一名专业的 Linux 运维与 SRE 智能体，具备完整的工具调用与执行能力。
-当前连接主机：${activeTab ? `${activeTab.title}（会话 ${activeTab.sessionId}）` : '本地终端'}
+  const isLocalWindows = !activeTab.isSsh && isWindowsPlatform();
+
+  const envLabel = activeTab.isSsh
+    ? `远程 SSH 主机：${activeTab.title}（登录用户: ${activeTab.server?.username || '未知'}，会话 ${activeTab.sessionId}）`
+    : isLocalWindows
+      ? `本地 Windows PowerShell 终端（会话 ${activeTab.sessionId}）`
+      : `本地终端：${activeTab.title}（会话 ${activeTab.sessionId}）`;
+
+  // 自动采集当前终端实时上下文（含 su 切换后的用户、cwd、最近退出码与屏幕输出快照）
+  const liveContextParts: string[] = [];
+  if (options?.terminalContextPrompt) {
+    liveContextParts.push(options.terminalContextPrompt);
+  }
+  const execMode = useAgentStore.getState().executionMode;
+  const attachCtx = useAgentStore.getState().attachTerminalContext;
+
+  if (attachCtx) {
+    let sessionCtx: SessionContext | null = null;
+    if (window.__TAURI_INTERNALS__) {
+      try {
+        sessionCtx = await invoke<SessionContext | null>('get_session_context', { sessionId });
+      } catch {}
+    }
+    const statusLines: string[] = [];
+    if (sessionCtx?.user) {
+      const loginUser = activeTab.server?.username;
+      if (activeTab.isSsh && loginUser && sessionCtx.user !== loginUser) {
+        statusLines.push(
+          `- 当前交互终端有效用户: ${sessionCtx.user}（用户已通过 su/sudo 从初始登录账号 ${loginUser} 切换身份）`
+        );
+      } else {
+        statusLines.push(`- 当前终端用户: ${sessionCtx.user}`);
+      }
+    }
+    if (sessionCtx?.hostname) {
+      statusLines.push(`- 当前终端主机名: ${sessionCtx.hostname}`);
+    }
+    if (sessionCtx?.cwd) {
+      statusLines.push(`- 当前终端工作目录: ${sessionCtx.cwd}`);
+    }
+    if (sessionCtx?.last_exit_code !== null && sessionCtx?.last_exit_code !== undefined) {
+      statusLines.push(`- 最近命令退出码: ${sessionCtx.last_exit_code}`);
+    }
+    statusLines.push(
+      execMode === 'pty'
+        ? '- 当前工具执行通道: 终端内联 PTY（命令直接运行在当前交互式 Shell 中，自动继承 su/sudo 身份、cwd、环境变量与跳板机上下文）'
+        : '- 当前工具执行通道: 独立隔离 Exec 通道（自动切换至当前 cwd，但默认使用 SSH 初始登录账号；若需在 su 后的身份下执行，请使用 sudo -u <用户> 或提示用户切换到「终端内联」模式）'
+    );
+    liveContextParts.push(statusLines.join('\n'));
+
+    const snapshot = getTerminalSnapshot(sessionId, 40) || sessionCtx?.recent_output?.slice(-1800) || '';
+    if (snapshot.trim()) {
+      liveContextParts.push(
+        `当前终端最近屏幕输出摘录:\n\`\`\`text\n${snapshot.trim().slice(-1800)}\n\`\`\``
+      );
+    }
+  }
+
+  const contextSection =
+    liveContextParts.length > 0
+      ? `\n\n当前交互式终端实时状态：\n${liveContextParts.join('\n\n')}`
+      : '';
+
+  const systemPrompt = `你是一名专业的运维与 SRE 智能体，具备真实工具调用与排障执行能力。
+当前连接环境：${envLabel}${contextSection}
 
 执行准则：
-1. 真实执行，不允许口头承诺
-   - 环境探测、状态排查、服务操作必须通过 terminal_exec、file_read、file_list、system_info 实际调用。
-   - 脚本与配置文件必须通过 file_write 写入目标路径，不能只在回复文本中展示代码就视为已部署。
-2. 脚本编写方式
-   - 不要在 terminal_exec 中拼接超长多行文本或复杂的 heredoc，容易引出转义与语法问题。
-   - 推荐做法：先用 file_write 写入完整脚本到绝对路径（如 /usr/local/bin/xxx），再用 terminal_exec 执行 chmod +x 并运行。
+1. 真实执行，禁止口头承诺
+   - 环境探测、日志排查、服务操作必须调用 terminal_exec、file_read、file_list、system_info 完成。
+   - 编写脚本与配置文件必须通过 file_write 真实写入磁盘，不能只在回复中贴代码。
+2. 脚本写入规范
+   - 避免在 terminal_exec 中拼接超长多行脚本或复杂 heredoc；先用 file_write 写入完整内容，再用 terminal_exec 赋权并执行。
 3. 闭环验证
-   - 部署、重启或配置变更后，必须再调用 terminal_exec 验证最终状态（如 docker ps、ss -lntp、systemctl status、curl），确认生效后再向用户汇报。
-4. 表达风格
-   - 直接给结论与关键事实，省略过程性叙述和客套话。
-   - 不使用 Emoji。
-5. 必须给出最终结论
-   - 所有工具调用结束后，必须在回复正文中给出结构化结论，格式如下：
-### 执行结论
-- 目标达成情况: [已完成 / 异常] + 一句话概述
-- 关键状态与验证: [真实数据：服务名、进程 PID、运行时长、内存占用、监听端口或退出码等]
-- 重点变更说明: [配置修改或脚本部署；无则写"无"]
-   - 「关键状态与验证」必须引用本轮工具返回的真实数据，不能只写"运行正常"之类的空泛描述，也不要写成半句。
-   - 不允许只调用工具而无任何文字结论，也不允许空回复。
-6. 以最终状态判定成败
-   - 判断依据是业务目标和最终验证状态，而非中间过程。
-   - 前置探测、条件判断类命令（grep、test、[ ]、pidof、which、diff、systemctl is-active 等）返回非零退出码属于正常结果，不代表失败。
-   - 中间出现的报错若已被后续步骤修复或成功绕过，应判定为已完成；不要因为过程曲折就写成"任务未完成"或"操作失败"。
-   - 确实异常时，需要指明是哪一项最终验证未达标，避免使用笼统表述。`;
+   - 部署、重启或修改配置后，必须再调用 terminal_exec 验证最终状态，确认生效后再汇报。
+4. 清晰详尽的最终结论
+   - 所有工具调用结束后，务必给出清晰、直观的最终总结，包含：
+     1) 目标达成情况或排查根因（1-2 句直奔结论）；
+     2) 关键验证数据与事实（真实引用的端口、进程/PID、资源指标、日志片段或配置值，支持 Markdown 列表或表格）；
+     3) 重点变更项与后续建议（无变更则写“无”）。
+   - 不使用 Emoji，省略过程性套话；不允许调用完工具后空回复或草草一句话带过。
+5. 以最终状态判定成败
+   - 前置探测、条件判断类命令（grep、test、[ ]、pidof、which、diff、systemctl is-active 等）返回非零退出码属于正常判断结果，不代表失败。
+   - 中间报错若已被后续步骤修复，最终结论应判定为已完成。`;
 
-  const conversation: any[] = [
-    { role: 'system', content: systemPrompt },
-  ];
+  const conversation: any[] = [{ role: 'system', content: systemPrompt }];
 
-  // 导入最近历史消息
   for (const m of historyMessages) {
     if (m.role === 'user') {
-      if (m.content) {
-        conversation.push({ role: 'user', content: m.content });
-      }
+      if (m.content) conversation.push({ role: 'user', content: m.content });
     } else if (m.role === 'assistant') {
-      // 中止标记属于历史痕迹，不得进入模型上下文，避免复述为"未完成"
       const historyText = sanitizeHistoryContent(m.content);
       if (m.toolCalls && m.toolCalls.length > 0) {
         const validCalls = m.toolCalls.map((tc) => ({
@@ -297,35 +221,25 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           });
         }
       } else if (historyText) {
-        conversation.push({
-          role: 'assistant',
-          content: historyText,
-        });
+        conversation.push({ role: 'assistant', content: historyText });
       }
     }
   }
 
-  // 追加当前用户提示词
   conversation.push({ role: 'user', content: userPrompt });
 
   const runtime = resolveAiRuntime(settingsStore.settings);
-  const baseUrl = runtime.baseUrl;
-  const apiKey = runtime.apiKey;
-  const model = runtime.model;
+  const { baseUrl, apiKey, model } = runtime;
 
-  // 创建 Assistant 消息占位
-  const assistantMsgId = 'msg-' + (Date.now() + 1);
   const toolCallItems: ToolCallItem[] = [];
-
   agentStore.addMessage(tabId, {
-    id: assistantMsgId,
+    id: 'msg-' + (Date.now() + 1),
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
     toolCalls: toolCallItems,
   });
 
-  // 模型未配置完整时直接给出明确配置提示，不再用厂商默认值静默兜底
   const configError = validateAiRuntime(runtime);
   if (configError) {
     agentStore.updateLastMessage(tabId, (m) => ({ ...m, content: configError }));
@@ -334,233 +248,60 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
     return;
   }
 
-  const maxLoops = MAX_AGENT_LOOPS;
   let loopCount = 0;
-
   let accumulatedThinking = '';
   let accumulatedContent = '';
-  // 每次工具执行完毕后重置结论基线，确保只认最近一次执行之后的结论文本
   let conclusionBaseline = 0;
-  // 最近一次输出的结束原因是否属于被截断，截断的结论一律视为未闭环
   let lastSegmentTruncated = false;
-  // 截断提示独立保存：兜底替换残句后仍需向用户明示输出被截断
   let conclusionFinishNote = '';
+
   const hasFreshConclusion = () =>
     isConclusionComplete(accumulatedContent.slice(conclusionBaseline), {
       truncated: lastSegmentTruncated,
     });
 
   try {
-    while (loopCount < maxLoops) {
+    while (loopCount < MAX_AGENT_LOOPS) {
       if (signal.aborted) break;
       loopCount++;
 
-      let buffer = '';
-      let loopThinking = '';
-      let loopContent = '';
-      const toolCallsMap: Map<number, { id: string; name: string; args: string }> = new Map();
-      let thinkState: { inThink: boolean; pending: string } = { inThink: false, pending: '' };
-      let lastFinishReason: string | undefined;
-      let sawAnyChunk = false;
-      const loopStartTime = Date.now();
-      let thinkingDuration: number | undefined = undefined;
-      // 流式刷新节流状态
-      let lastFlushAt = 0;
-      let pendingFlush: (() => void) | null = null;
-      const flushPending = () => {
-        if (pendingFlush) {
-          pendingFlush();
-          pendingFlush = null;
-        }
-      };
-
-      const handleLines = (lines: string[]) => {
-        let updated = false;
-        let streamError: string | null = null;
-
-        for (const line of lines) {
-          const parsedLine = parseSseDataLine(line);
-          if (!parsedLine) continue;
-
-          if (parsedLine.error) {
-            streamError = parsedLine.error;
-            continue;
-          }
-
-          if (parsedLine.reasoning) {
-            loopThinking += parsedLine.reasoning;
-            updated = true;
-          }
-
-          if (parsedLine.content) {
-            const parsedThink = parseThinkTag(parsedLine.content, thinkState);
-            thinkState = parsedThink.state;
-            if (parsedThink.thinking) {
-              loopThinking += parsedThink.thinking;
-              thinkingDuration = Date.now() - loopStartTime;
-            }
-            if (parsedThink.content) {
-              loopContent += parsedThink.content;
-            }
-            updated = true;
-          }
-
-          if (parsedLine.toolCalls) {
-            for (const tc of parsedLine.toolCalls) {
-              const index = tc.index ?? 0;
-              const existing = toolCallsMap.get(index) || { id: '', name: '', args: '' };
-              if (tc.id) existing.id = tc.id;
-              if (tc.name) existing.name += tc.name;
-              if (tc.arguments) existing.args += tc.arguments;
-              toolCallsMap.set(index, existing);
-            }
-            updated = true;
-          }
-
-          if (parsedLine.finishReason) {
-            lastFinishReason = parsedLine.finishReason;
-          }
-        }
-
-        if (streamError) {
-          throw new Error(streamError);
-        }
-
-        if (updated) {
-          const mergedThinking = accumulatedThinking
-            ? (loopThinking ? `${accumulatedThinking}\n\n${loopThinking}` : accumulatedThinking)
-            : loopThinking;
-          const mergedContent = accumulatedContent
-            ? (loopContent ? `${accumulatedContent}\n\n${loopContent}` : accumulatedContent)
-            : loopContent;
-
-          // 流式高频刷新做节流，避免每个 token 都复制整个消息数组导致卡顿
-          const now = Date.now();
-          const shouldFlush = now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS;
-          if (shouldFlush) {
-            lastFlushAt = now;
-            agentStore.updateLastMessage(tabId, (m) => ({
-              ...m,
-              thinking: mergedThinking || m.thinking,
-              thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
-              content: mergedContent,
-            }));
-          } else {
-            pendingFlush = () => {
-              agentStore.updateLastMessage(tabId, (m) => ({
-                ...m,
-                thinking: mergedThinking || m.thinking,
-                thinkingTimeMs: thinkingDuration || m.thinkingTimeMs,
-                content: mergedContent,
-              }));
-            };
-          }
-        }
-      };
-
-      await streamChatCompletion(
+      const turn = await executeLlmTurn({
         baseUrl,
-        apiKey || '',
-        {
-          model,
-          messages: conversation,
-          tools: AGENT_TOOLS,
-          tool_choice: 'auto',
-          temperature: 0.2,
-          stream: true,
-        },
+        apiKey: apiKey || '',
+        model,
+        messages: conversation,
+        tools: AGENT_TOOLS,
         signal,
-        (chunkText) => {
-          buffer += chunkText;
-          // 兼容网关忽略 stream 参数、直接返回完整 JSON 的情形
-          if (!sawAnyChunk && looksLikeNonSseJson(buffer)) {
-            return;
-          }
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          if (lines.some((line) => line.trim().startsWith('data:'))) {
-            sawAnyChunk = true;
-          }
-          handleLines(lines);
+        scopeKey,
+        accumulatedThinking,
+        accumulatedContent,
+        onUpdate: (patch) => {
+          agentStore.updateLastMessage(tabId, (m) => ({
+            ...m,
+            thinking: patch.thinking || m.thinking,
+            thinkingTimeMs: patch.thinkingTimeMs || m.thinkingTimeMs,
+            content: patch.content,
+          }));
         },
-        tabId,
-      );
-
-      // 非 SSE 完整响应：一次性解析，避免静默丢弃
-      if (!sawAnyChunk && buffer.trim()) {
-        const wholeBody = parseNonSseBody(buffer);
-        buffer = '';
-        if (wholeBody?.error) {
-          throw new Error(wholeBody.error);
-        }
-        if (wholeBody) {
-          if (wholeBody.reasoning) loopThinking += wholeBody.reasoning;
-          if (wholeBody.content) {
-            const parsedThink = parseThinkTag(wholeBody.content, thinkState);
-            thinkState = parsedThink.state;
-            loopThinking += parsedThink.thinking;
-            loopContent += parsedThink.content;
-          }
-          if (wholeBody.finishReason) lastFinishReason = wholeBody.finishReason;
-        }
-        const mergedThinking = accumulatedThinking
-          ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
-          : loopThinking;
-        const mergedContent = accumulatedContent
-          ? `${accumulatedContent}\n\n${loopContent}`.trim()
-          : loopContent;
-        agentStore.updateLastMessage(tabId, (m) => ({
-          ...m,
-          thinking: mergedThinking || m.thinking,
-          content: mergedContent,
-        }));
-      } else if (buffer.trim()) {
-        handleLines([buffer.trim()]);
-        buffer = '';
-      }
-
-      // 流式结束前落地最后一次未刷新的增量
-      flushPending();
+      });
 
       if (signal.aborted) break;
 
-      if (loopThinking && !thinkingDuration) {
-        thinkingDuration = Date.now() - loopStartTime;
-        agentStore.updateLastMessage(tabId, (m) => ({
-          ...m,
-          thinkingTimeMs: thinkingDuration,
-        }));
-      }
-
-      if (loopThinking) {
+      if (turn.loopThinking) {
         accumulatedThinking = accumulatedThinking
-          ? `${accumulatedThinking}\n\n${loopThinking}`
-          : loopThinking;
+          ? `${accumulatedThinking}\n\n${turn.loopThinking}`
+          : turn.loopThinking;
       }
-      if (loopContent) {
+      if (turn.loopContent) {
         accumulatedContent = accumulatedContent
-          ? `${accumulatedContent}\n\n${loopContent}`
-          : loopContent;
+          ? `${accumulatedContent}\n\n${turn.loopContent}`
+          : turn.loopContent;
       }
 
-      // 服务端明确的截断/拦截视为未闭环；内容本身的完整性由 isConclusionComplete 兜底校验
       lastSegmentTruncated =
-        lastFinishReason === 'length' || lastFinishReason === 'content_filter';
+        turn.finishReason === 'length' || turn.finishReason === 'content_filter';
 
-      // 汇总最终的 tool_calls
-      const finalToolCalls = Array.from(toolCallsMap.values())
-        .filter((tc) => tc.name)
-        .map((tc) => ({
-          id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          type: 'function' as const,
-          function: {
-            name: tc.name,
-            arguments: tc.args,
-          },
-        }));
-
-      // 输出被截断/被拦截必须明示，避免用户误以为任务正常结束
-      const finishNote = describeFinishReason(lastFinishReason);
+      const finishNote = describeFinishReason(turn.finishReason);
       if (finishNote) {
         accumulatedContent = accumulatedContent.trim()
           ? `${accumulatedContent.trim()}\n\n${finishNote}`
@@ -571,117 +312,28 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         }));
       }
 
-      if (finalToolCalls.length === 0) {
-        // 无更多工具调用
-        // 已执行过工具但结论缺失/不完整（字段不全或被截断）时，显式请求模型补充最终结论
-        if (
-          toolCallItems.length > 0 &&
-          !signal.aborted &&
-          !hasFreshConclusion()
-        ) {
-          // 结论请求基于独立消息序列构造，不改动原对话上下文
-          const conclusionPrompt = buildConclusionPrompt('session', toolCallItems);
-          loopThinking = '';
-          loopContent = '';
-          thinkState = { inThink: false, pending: '' };
-          // 预览基于去掉残句结论的正文，避免失败轮次的半句结论残留在界面
-          const conclusionBase = isTrailingConclusionComplete(accumulatedContent)
-            ? accumulatedContent
-            : dropIncompleteConclusion(accumulatedContent);
-
-          let reportContent = '';
-          for (let attempt = 0; attempt <= CONCLUSION_RETRY_TIMES; attempt++) {
-            // 每个 attempt 使用独立缓冲：失败的残句直接丢弃，不拼接进最终结论
-            let attemptContent = '';
-            let summaryBuffer = '';
-            let summaryFinishReason: string | undefined;
-
-            const collectAttempt = (lines: string[]) => {
-              for (const line of lines) {
-                const parsedLine = parseSseDataLine(line);
-                if (!parsedLine) continue;
-                if (parsedLine.error) {
-                  throw new Error(parsedLine.error);
-                }
-                if (parsedLine.reasoning) {
-                  loopThinking += parsedLine.reasoning;
-                }
-                if (parsedLine.content) {
-                  const parsedThink = parseThinkTag(parsedLine.content, thinkState);
-                  thinkState = parsedThink.state;
-                  loopThinking += parsedThink.thinking;
-                  attemptContent += parsedThink.content;
-                }
-                if (parsedLine.finishReason) {
-                  summaryFinishReason = parsedLine.finishReason;
-                }
-              }
-
-              if (attemptContent.trim()) {
-                const mergedThinking = accumulatedThinking
-                  ? `${accumulatedThinking}\n\n${loopThinking}`.trim()
-                  : loopThinking;
-                const mergedContent = conclusionBase
-                  ? `${conclusionBase}\n\n${attemptContent}`.trim()
-                  : attemptContent;
-                agentStore.updateLastMessage(tabId, (m) => ({
-                  ...m,
-                  thinking: mergedThinking || m.thinking,
-                  content: mergedContent,
-                }));
-              }
-            };
-
-            try {
-              await streamChatCompletion(
-                baseUrl,
-                apiKey || '',
-                {
-                  model,
-                  messages: buildConclusionMessages(conversation, conclusionPrompt),
-                  temperature: 0.2,
-                  stream: true,
-                },
-                signal,
-                (chunkText) => {
-                  summaryBuffer += chunkText;
-                  const lines = summaryBuffer.split('\n');
-                  summaryBuffer = lines.pop() || '';
-                  collectAttempt(lines);
-                },
-                tabId
-              );
-              if (summaryBuffer.trim()) {
-                collectAttempt([summaryBuffer.trim()]);
-              }
-            } catch (err: any) {
-              if (signal.aborted) break;
-              // 最后一次重试仍失败才交由确定性兜底，同时保留失败说明避免静默
-              if (attempt === CONCLUSION_RETRY_TIMES) {
-                conclusionFinishNote = `> 结论请求失败: ${err?.message || err}`;
-              }
-              continue;
-            }
-
-            if (signal.aborted) break;
-
-            const attemptTruncated =
-              summaryFinishReason === 'length' || summaryFinishReason === 'content_filter';
-            const attemptComplete = isConclusionComplete(attemptContent, {
-              truncated: attemptTruncated,
-            });
-
-            // 内容不完整时保留本轮结果用于最后兜底，字段齐全才采纳并停止重试
-            if (attemptContent.trim()) {
-              reportContent = attemptContent.trim();
-              const retryNote = describeFinishReason(summaryFinishReason);
-              if (retryNote && !attemptComplete) {
-                conclusionFinishNote = retryNote;
-              }
-            }
-            if (attemptComplete) break;
-          }
-
+      if (turn.toolCalls.length === 0) {
+        if (toolCallItems.length > 0 && !signal.aborted && !hasFreshConclusion()) {
+          const { reportContent, finishNote: retryNote } = await requestStructuredConclusion({
+            scope: 'session',
+            baseUrl,
+            apiKey: apiKey || '',
+            model,
+            conversation,
+            toolCallItems,
+            accumulatedThinking,
+            accumulatedContent,
+            signal,
+            scopeKey,
+            onUpdate: (patch) => {
+              agentStore.updateLastMessage(tabId, (m) => ({
+                ...m,
+                thinking: patch.thinking || m.thinking,
+                content: patch.content,
+              }));
+            },
+          });
+          if (retryNote) conclusionFinishNote = retryNote;
           if (reportContent.trim()) {
             accumulatedContent = upsertConclusion(accumulatedContent, reportContent);
             lastSegmentTruncated = !isTrailingConclusionComplete(accumulatedContent);
@@ -692,12 +344,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           }
         }
 
-        // 兜底闭环：模型未产出完整结论时，基于真实执行状态补齐，杜绝静默空答或残句结论
-        if (
-          !signal.aborted &&
-          toolCallItems.length > 0 &&
-          !hasFreshConclusion()
-        ) {
+        if (!signal.aborted && toolCallItems.length > 0 && !hasFreshConclusion()) {
           const fallback = buildDeterministicConclusion(toolCallItems);
           accumulatedContent = upsertConclusion(accumulatedContent, fallback);
           if (conclusionFinishNote && !accumulatedContent.includes(conclusionFinishNote)) {
@@ -708,7 +355,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
             content: accumulatedContent,
           }));
         } else if (!signal.aborted && toolCallItems.length === 0 && !accumulatedContent.trim()) {
-          // 模型未返回任何文本且未调用工具时明确呈现真实状态，避免空白消息
           agentStore.updateLastMessage(tabId, (m) => ({
             ...m,
             content: '模型未返回任何内容，请重试或检查模型配置。',
@@ -717,15 +363,13 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         break;
       }
 
-      // 追加 Assistant 的调用意图至上下文
       conversation.push({
         role: 'assistant',
-        content: loopContent || null,
-        tool_calls: finalToolCalls,
+        content: turn.loopContent || null,
+        tool_calls: turn.toolCalls,
       });
 
-      // 逐个执行工具调用
-      for (const tc of finalToolCalls) {
+      for (const tc of turn.toolCalls) {
         if (signal.aborted) break;
 
         const fnName = tc.function.name;
@@ -744,7 +388,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           riskLevel: 'safe',
         };
 
-        // 检查安全性
         if (fnName === 'terminal_exec') {
           const safety = await checkSafety(
             fnArgs.command || '',
@@ -752,6 +395,12 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           );
           toolCallItem.riskLevel = safety.risk_level;
           toolCallItem.warningMessage = safety.message;
+        } else if (fnName === 'file_write') {
+          const targetPath = String(fnArgs.path || '');
+          if (/(\/etc\/sudoers|authorized_keys|\/etc\/passwd|\/etc\/shadow|sshd_config)/i.test(targetPath)) {
+            toolCallItem.riskLevel = 'dangerous';
+            toolCallItem.warningMessage = `正在修改系统关键认证或权限文件: ${targetPath}`;
+          }
         }
 
         toolCallItems.push(toolCallItem);
@@ -762,7 +411,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
         if (signal.aborted) break;
 
-        // 权限判定
         const permMode = useAgentStore.getState().permissionMode;
         let allowed = true;
 
@@ -778,13 +426,11 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           }
         } else {
           let needsApproval = false;
-
           if (toolCallItem.riskLevel === 'dangerous') {
             needsApproval = true;
           } else if (permMode === 'full') {
             needsApproval = false;
           } else {
-            // 需确认模式 (ask)：写操作与高风险命令需人工确认，只读探测自主放行
             if (fnName === 'file_write') {
               needsApproval = true;
             } else if (fnName === 'terminal_exec') {
@@ -795,7 +441,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
           }
 
           if (needsApproval) {
-            // 挂起等待用户确认
             toolCallItem.status = 'pending';
             agentStore.updateLastMessage(tabId, (m) => ({
               ...m,
@@ -807,7 +452,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
             });
 
             if (signal.aborted) break;
-
             if (!allowed) {
               toolCallItem.status = 'rejected';
               toolCallItem.result = '用户取消了本次工具执行';
@@ -849,20 +493,16 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
 
         if (signal.aborted) break;
 
-        // 反馈工具执行结果给模型
         conversation.push({
           role: 'tool',
           tool_call_id: tc.id,
-          // 界面保留完整输出，送入模型的上下文按长度截断，避免撑爆窗口
           content: truncateToolResult(toolCallItem.result || '(无输出)'),
         });
       }
 
-      // 本轮工具执行完毕，后续结论文本必须基于最新执行状态重新生成
       conclusionBaseline = accumulatedContent.length;
     }
 
-    // 轮次耗尽闭环：达到最大循环仍无完整结论时，依据真实执行状态补齐，避免静默结束
     if (!signal.aborted && toolCallItems.length > 0 && !hasFreshConclusion()) {
       const fallback = buildDeterministicConclusion(toolCallItems);
       accumulatedContent = upsertConclusion(accumulatedContent, fallback);
@@ -871,7 +511,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         content: accumulatedContent,
       }));
     }
-
   } catch (err: any) {
     if (signal.aborted || err.name === 'AbortError') {
       agentStore.updateLastMessage(tabId, (m) => {
@@ -885,7 +524,6 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
         return m;
       });
     } else {
-      // 执行异常时仍需给出闭环结论：保留真实执行状态汇总并追加异常原因
       const errorNote = `任务执行异常: ${err?.message || err}`;
       agentStore.updateLastMessage(tabId, (m) => {
         const closure =
@@ -902,5 +540,7 @@ export async function runAgentTask(userPrompt: string, targetTabId?: string): Pr
   } finally {
     delete abortControllers[tabId];
     agentStore.setIsThinking(tabId, false);
+    const persistKey = activeTab.isSsh && activeTab.server ? `srv:${activeTab.server.id}` : 'local';
+    agentStore.persistHistory(tabId, persistKey).catch(() => {});
   }
 }

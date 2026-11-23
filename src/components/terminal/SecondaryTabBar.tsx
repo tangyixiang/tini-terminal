@@ -12,6 +12,7 @@ import {
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { BUILTIN_THEMES } from '../../types/theme';
+import { SnippetsPopover } from './SnippetsPopover';
 
 export const SecondaryTabBar: React.FC = () => {
   const { tabs, activeTabId, setActiveTabId, closeTab, openLocalTab } = useTerminalStore();
@@ -73,6 +74,10 @@ export const SecondaryTabBar: React.FC = () => {
 
   const handleRetry = () => {
     window.dispatchEvent(new CustomEvent('terminal:retry', { detail: { tabId: activeTabId } }));
+  };
+
+  const handleOpenSearch = () => {
+    window.dispatchEvent(new CustomEvent('terminal:search', { detail: { tabId: activeTabId } }));
   };
 
   const handleCloseOthers = () => {
@@ -234,6 +239,23 @@ export const SecondaryTabBar: React.FC = () => {
             <span>重试</span>
           </button>
         )}
+
+        {/* 搜索 */}
+        <button
+          onClick={handleOpenSearch}
+          className="px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors hover:opacity-100 opacity-75 flex items-center gap-1"
+          style={{
+            backgroundColor: currentTheme.ui.hoverBg,
+            color: currentTheme.ui.text,
+          }}
+          title="搜索终端内容"
+        >
+          <Search className="w-3 h-3" />
+          <span>搜索</span>
+        </button>
+
+        {/* 快捷命令片段库（含多终端广播） */}
+        <SnippetsPopover />
 
         {/* 清屏 */}
         <button

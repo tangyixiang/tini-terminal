@@ -1,5 +1,6 @@
-use std::sync::Arc;
-use crate::ssh::SshManager;
+use std::sync::{Arc, Mutex};
+use crate::sftp::SftpManager;
+use crate::ssh::{SshConnectOptions, SshManager};
 use crate::storage::{ServerRecord, StorageManager, TaskRecord};
 use super::executor::TaskExecutor;
 use super::model::{TaskPlan, TaskStatus, TaskStep};
@@ -24,29 +25,30 @@ impl TaskManager {
         Self { storage, executor }
     }
 
-    pub async fn execute_on_host(
-        &self,
-        host_id: &str,
-        command: &str,
-    ) -> Result<HostExecResult, String> {
+    fn resolve_server(&self, host_id: &str) -> Result<ServerRecord, String> {
         let all_servers = self.storage.list_servers().map_err(|e| e.to_string())?;
-
-        let server = if host_id == "local" || host_id == "localhost" {
-            // 仅使用真实登记的本机主机，不再伪造默认凭证的虚拟记录
+        if host_id == "local" || host_id == "localhost" {
             all_servers
                 .into_iter()
                 .find(|s| s.host == "localhost" || s.host == "127.0.0.1")
                 .ok_or_else(|| {
                     "未配置本机主机：请先在主机列表中添加 host 为 localhost 或 127.0.0.1 的条目"
                         .to_string()
-                })?
+                })
         } else {
             all_servers
                 .into_iter()
                 .find(|s| s.id == host_id || s.name.eq_ignore_ascii_case(host_id))
-                .ok_or_else(|| format!("未找到目标主机: {}", host_id))?
-        };
+                .ok_or_else(|| format!("未找到目标主机: {}", host_id))
+        }
+    }
 
+    pub async fn execute_on_host(
+        &self,
+        host_id: &str,
+        command: &str,
+    ) -> Result<HostExecResult, String> {
+        let server = self.resolve_server(host_id)?;
         let (exit_code, stdout, stderr, duration_ms) = self
             .executor
             .execute_step_on_host(&server, command)
@@ -60,48 +62,96 @@ impl TaskManager {
         })
     }
 
+    /// 通过原生 SFTP（或本地 std::fs）读取主机文件，避免 shell 拼接与平台命令差异
     pub async fn read_host_file(&self, host_id: &str, file_path: &str) -> Result<String, String> {
-        let cmd = format!("cat '{}'", file_path.replace('\'', "'\\''"));
-        let res = self.execute_on_host(host_id, &cmd).await?;
-        if res.exit_code != 0 {
-            return Err(if !res.stderr.is_empty() {
-                res.stderr
-            } else {
-                format!("读取文件失败，退出码: {}", res.exit_code)
-            });
+        let server = self.resolve_server(host_id)?;
+        let is_local =
+            (server.host == "localhost" || server.host == "127.0.0.1") && server.username == "local";
+        let path = file_path.to_string();
+
+        if is_local {
+            return tokio::task::spawn_blocking(move || {
+                std::fs::read_to_string(&path)
+                    .map_err(|e| format!("读取本地文件失败 ({}): {}", path, e))
+            })
+            .await
+            .map_err(|e| format!("调度本地读文件失败: {}", e))?;
         }
-        Ok(res.stdout)
+
+        let options = SshConnectOptions {
+            host: server.host,
+            port: server.port,
+            username: server.username,
+            auth_type: server.auth_type,
+            credential: server.credential,
+            passphrase: server.passphrase,
+            cols: 80,
+            rows: 24,
+        };
+        tokio::task::spawn_blocking(move || {
+            let sess = SshManager::establish_connection(&options)?;
+            let sess_arc = Arc::new(Mutex::new(sess));
+            SftpManager::read_file(sess_arc, &path, None)
+        })
+        .await
+        .map_err(|e| format!("调度远程读文件失败: {}", e))?
     }
 
+    /// 通过原生 SFTP（或本地 std::fs）写入主机文件，彻底规避 ARG_MAX 长度限制与 base64 参数差异
     pub async fn write_host_file(
         &self,
         host_id: &str,
         file_path: &str,
         content: &str,
     ) -> Result<(), String> {
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
-        let escaped_path = file_path.replace('\'', "'\\''");
-        let cmd = format!(
-            "mkdir -p \"$(dirname '{}')\" && echo '{}' | base64 -d > '{}'",
-            escaped_path, b64, escaped_path
-        );
-        let res = self.execute_on_host(host_id, &cmd).await?;
-        if res.exit_code != 0 {
-            return Err(if !res.stderr.is_empty() {
-                res.stderr
-            } else {
-                format!("写入文件失败，退出码: {}", res.exit_code)
-            });
+        let server = self.resolve_server(host_id)?;
+        let is_local =
+            (server.host == "localhost" || server.host == "127.0.0.1") && server.username == "local";
+        let path = file_path.to_string();
+        let data = content.to_string();
+
+        if is_local {
+            return tokio::task::spawn_blocking(move || {
+                let p = std::path::Path::new(&path);
+                if let Some(parent) = p.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| format!("创建父级目录失败: {}", e))?;
+                    }
+                }
+                std::fs::write(p, data.as_bytes())
+                    .map_err(|e| format!("写入本地文件失败 ({}): {}", path, e))
+            })
+            .await
+            .map_err(|e| format!("调度本地写文件失败: {}", e))?;
         }
-        Ok(())
+
+        let options = SshConnectOptions {
+            host: server.host,
+            port: server.port,
+            username: server.username,
+            auth_type: server.auth_type,
+            credential: server.credential,
+            passphrase: server.passphrase,
+            cols: 80,
+            rows: 24,
+        };
+        tokio::task::spawn_blocking(move || {
+            let sess = SshManager::establish_connection(&options)?;
+            let sess_arc = Arc::new(Mutex::new(sess));
+            SftpManager::write_file(sess_arc, &path, &data)
+        })
+        .await
+        .map_err(|e| format!("调度远程写文件失败: {}", e))?
     }
 
     pub fn list_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<TaskPlan>, String> {
         let records = self.storage.list_tasks(workspace_id).map_err(|e| e.to_string())?;
         let mut list = Vec::new();
         for r in records {
-            let steps: Vec<TaskStep> = r.plan_json.as_deref()
+            let steps: Vec<TaskStep> = r
+                .plan_json
+                .as_deref()
                 .and_then(|j| serde_json::from_str(j).ok())
                 .unwrap_or_default();
             let status = match r.status.as_str() {
@@ -160,7 +210,6 @@ impl TaskManager {
         };
         let _ = self.storage.save_task(&initial_record);
 
-        // 并发执行各主机任务步骤
         let steps = self.executor.execute_batch(servers, command.to_string()).await;
 
         let total = steps.len();
@@ -184,7 +233,11 @@ impl TaskManager {
             id: task_id.clone(),
             workspace_id: workspace_id.to_string(),
             prompt: prompt.to_string(),
-            status: if is_all_ok { "Completed".to_string() } else { "Failed".to_string() },
+            status: if is_all_ok {
+                "Completed".to_string()
+            } else {
+                "Failed".to_string()
+            },
             plan_json: steps_json,
             result_json: Some(summary.clone()),
             created_at: now,

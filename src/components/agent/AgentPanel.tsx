@@ -1,13 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Send,
   Loader2,
-  ChevronDown,
   ChevronRight,
   ShieldAlert,
   CheckCircle2,
   XCircle,
-  Clock,
   Terminal,
   FileCode,
   Folder,
@@ -19,17 +16,25 @@ import {
   Maximize2,
   Minimize2,
   ArrowDown,
+  Download,
+  UserCheck,
+  Eye,
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useAgentStore, createDefaultSessionState } from '../../stores/useAgentStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { runAgentTask, abortAgentTask } from '../../lib/agent/runner';
-import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
+import { BUILTIN_THEMES } from '../../types/theme';
 import { maxAiPanelWidth, MIN_AI_PANEL_WIDTH } from '../../lib/layout';
 import { useViewportWidth } from '../../lib/useViewportWidth';
+import { isMacPlatform } from '../../lib/platform';
 import { MiniTerminalConsole } from './MiniTerminalConsole';
-import type { ToolCallItem } from '../../types';
+import type { SessionContext, ToolCallItem } from '../../types';
 import { MarkdownView } from './MarkdownView';
+import { ThinkingCard } from './shared/ThinkingCard';
+import { ApprovalBanner } from './shared/ApprovalBanner';
+import { ChatComposer } from './shared/ChatComposer';
 
 export const AgentPanel: React.FC = () => {
   const [input, setInput] = useState('');
@@ -57,14 +62,72 @@ export const AgentPanel: React.FC = () => {
 
   const {
     sessions,
+    executionMode,
+    attachTerminalContext,
+    setExecutionMode,
+    setAttachTerminalContext,
     respondApproval,
     clearMessages,
+    loadHistory,
   } = useAgentStore();
+
+  const [liveContext, setLiveContext] = useState<SessionContext | null>(null);
+  const persistKey = activeTab
+    ? activeTab.isSsh && activeTab.server
+      ? `srv:${activeTab.server.id}`
+      : 'local'
+    : '';
+
+  // 自动加载当前主机的持久化对话历史
+  useEffect(() => {
+    if (activeTab && persistKey) {
+      loadHistory(activeTab.id, persistKey);
+    }
+  }, [activeTab?.id, persistKey, loadHistory]);
+
+  // 实时同步当前终端会话上下文（用户切换 su / cwd / 退出码）
+  useEffect(() => {
+    if (!activeTab || !window.__TAURI_INTERNALS__) {
+      setLiveContext(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const ctx = await invoke<SessionContext | null>('get_session_context', {
+          sessionId: activeTab.sessionId,
+        });
+        if (!cancelled) setLiveContext(ctx);
+      } catch {}
+    };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeTab?.sessionId]);
 
   const currentSessionState = sessions[currentTabId] || createDefaultSessionState();
   const messages = currentSessionState.messages;
   const isThinking = currentSessionState.isThinking;
   const pendingToolCall = currentSessionState.pendingToolCall;
+
+  // 响应终端右键菜单「发送给 AI 诊断 / 解释选中内容」事件
+  useEffect(() => {
+    const onAskWithContext = (e: Event) => {
+      const detail = (e as CustomEvent<{ prompt: string; autoSend?: boolean }>).detail;
+      if (!detail?.prompt) return;
+      if (detail.autoSend && activeTab && !isThinking) {
+        scrollToBottom();
+        runAgentTask(detail.prompt, activeTab.id);
+      } else {
+        setInput(detail.prompt);
+      }
+    };
+    window.addEventListener('agent:ask-with-context', onAskWithContext);
+    return () => window.removeEventListener('agent:ask-with-context', onAskWithContext);
+  }, [activeTab?.id, isThinking]);
 
   const {
     themeId,
@@ -141,14 +204,40 @@ export const AgentPanel: React.FC = () => {
     if (isThinking) {
       abortAgentTask(currentTabId);
     }
-    clearMessages(currentTabId);
+    clearMessages(currentTabId, persistKey);
+  };
+
+  const handleExportMarkdown = () => {
+    if (messages.length === 0) return;
+    const md = messages
+      .map((m) => {
+        const time = new Date(m.timestamp).toLocaleString();
+        const roleLabel = m.role === 'user' ? '用户提问' : 'AI 运维分析';
+        const toolsMd = (m.toolCalls || [])
+          .map(
+            (tc) =>
+              `- 工具 \`${tc.name}\` (${tc.status}): \`${
+                tc.name === 'terminal_exec' ? tc.args?.command || '' : JSON.stringify(tc.args || {})
+              }\``
+          )
+          .join('\n');
+        return `## ${roleLabel} (${time})\n\n${toolsMd ? `${toolsMd}\n\n` : ''}${m.content || ''}`;
+      })
+      .join('\n\n---\n\n');
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tini-ops-report-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleRespondApproval = (allowed: boolean) => {
     respondApproval(currentTabId, allowed);
   };
 
-  const isMac = typeof navigator !== 'undefined' && /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent || navigator.platform || '');
+  const isMac = isMacPlatform();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Mac 支持 Cmd + Enter 与 Ctrl + Enter，Windows 支持 Ctrl + Enter
@@ -247,6 +336,16 @@ export const AgentPanel: React.FC = () => {
           )}
 
           <button
+            onClick={handleExportMarkdown}
+            disabled={messages.length === 0}
+            className="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 disabled:opacity-25 transition-opacity"
+            style={{ color: currentTheme.ui.text }}
+            title="导出 Markdown 运维报告"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
+
+          <button
             onClick={handleClear}
             className="p-1 rounded cursor-pointer hover:opacity-100 opacity-60 transition-opacity"
             style={{ color: currentTheme.ui.text }}
@@ -278,6 +377,82 @@ export const AgentPanel: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* 终端实时上下文与执行通道控制条（直观展示 su 用户切换与 cwd 感知状态） */}
+      {activeTab && (
+        <div
+          className="px-2.5 py-1.5 border-b flex items-center justify-between gap-2 shrink-0 text-[11px]"
+          style={{
+            backgroundColor: currentTheme.ui.cardBg,
+            borderColor: currentTheme.ui.border,
+            color: currentTheme.ui.textMuted,
+          }}
+        >
+          <div className="flex items-center gap-1.5 min-w-0 font-mono truncate">
+            {(() => {
+              const user = liveContext?.user || activeTab.server?.username || '';
+              const switched =
+                Boolean(activeTab.isSsh && activeTab.server?.username && liveContext?.user && liveContext.user !== activeTab.server.username);
+              const cwd = liveContext?.cwd || '';
+              return (
+                <span
+                  className={`flex items-center gap-1 truncate ${switched ? 'text-amber-400 font-semibold' : ''}`}
+                  title={
+                    switched
+                      ? `已感知终端用户切换: ${activeTab.server?.username} -> ${user}（建议开启「终端内联」直接继承身份）`
+                      : `当前终端上下文: ${user || '-'} ${cwd || ''}`
+                  }
+                >
+                  <UserCheck className="w-3 h-3 shrink-0" />
+                  <span className="truncate">
+                    {user || 'shell'}
+                    {cwd ? `:${cwd}` : ''}
+                  </span>
+                </span>
+              );
+            })()}
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setAttachTerminalContext(!attachTerminalContext)}
+              className="px-1.5 py-0.5 rounded border cursor-pointer flex items-center gap-1 transition-colors"
+              style={{
+                borderColor: attachTerminalContext ? currentTheme.ui.accent : currentTheme.ui.border,
+                color: attachTerminalContext ? currentTheme.ui.accent : currentTheme.ui.textMuted,
+                backgroundColor: attachTerminalContext ? currentTheme.ui.hoverBg : 'transparent',
+              }}
+              title={
+                attachTerminalContext
+                  ? '已开启：自动附带当前终端目录、用户与屏幕快照'
+                  : '已关闭：不附带终端屏幕上下文'
+              }
+            >
+              <Eye className="w-3 h-3" />
+              <span>现场</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setExecutionMode(executionMode === 'pty' ? 'isolated' : 'pty')}
+              className="px-1.5 py-0.5 rounded border cursor-pointer transition-colors font-medium"
+              style={{
+                borderColor: executionMode === 'pty' ? '#f59e0b' : currentTheme.ui.border,
+                color: executionMode === 'pty' ? '#f59e0b' : currentTheme.ui.text,
+                backgroundColor: executionMode === 'pty' ? 'rgba(245, 158, 11, 0.12)' : 'transparent',
+              }}
+              title={
+                executionMode === 'pty'
+                  ? '终端内联模式：命令直接运行在当前交互 PTY 中，自动继承 su / sudo -i / cd / 虚拟环境 / 跳板机'
+                  : '隔离通道模式：在独立 SSH Exec 通道执行，不干扰当前终端界面（自动同步 cwd）'
+              }
+            >
+              {executionMode === 'pty' ? '终端内联' : '隔离通道'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 消息与多步任务时间线 */}
       <div
@@ -377,82 +552,19 @@ export const AgentPanel: React.FC = () => {
 
                 {/* 思考过程卡片 */}
                 {msg.thinking && (
-                  <div
-                    className="border rounded p-2.5 transition-colors"
-                    style={{
-                      backgroundColor: currentTheme.ui.cardBg,
-                      borderColor: currentTheme.ui.border,
-                      fontSize: `${subFontSize}px`,
-                    }}
-                  >
-                    <div
-                      className="flex items-center justify-between font-medium select-none"
-                      style={{ color: currentTheme.ui.accent, fontSize: `${subFontSize}px` }}
-                    >
-                      <span
-                        onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
-                        className="flex items-center gap-1.5 cursor-pointer flex-1"
-                      >
-                        {isLatestAssistant && !msg.content ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                        ) : (
-                          <Clock className="w-3.5 h-3.5 shrink-0" />
-                        )}
-                        <span>
-                          {isLatestAssistant && !msg.content
-                            ? `深度思考推理中 (${(elapsedMs / 1000).toFixed(1)}s)`
-                            : msg.thinkingTimeMs
-                            ? `思考与推理分析 (${(msg.thinkingTimeMs / 1000).toFixed(1)}s)`
-                            : '思考与推理分析'}
-                        </span>
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCopyText(`think-${msg.id}`, msg.thinking || '');
-                          }}
-                          className="p-1 rounded hover:opacity-100 opacity-60 transition-opacity cursor-pointer"
-                          style={{
-                            color: copiedId === `think-${msg.id}` ? '#10b981' : currentTheme.ui.textMuted,
-                          }}
-                          title={copiedId === `think-${msg.id}` ? '已复制' : '复制思考内容'}
-                        >
-                          {copiedId === `think-${msg.id}` ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <span
-                          onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
-                          className="cursor-pointer p-0.5"
-                        >
-                          {isThinkingExpanded ? (
-                            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
-                          ) : (
-                            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                    {isThinkingExpanded && (
-                      <div
-                        className="mt-2 whitespace-pre-wrap leading-relaxed border-t pt-2 font-mono"
-                        style={{
-                          borderColor: currentTheme.ui.border,
-                          color: currentTheme.ui.textMuted,
-                          fontSize: `${codeFontSize}px`,
-                        }}
-                      >
-                        {msg.thinking}
-                        {isLatestAssistant && !msg.content && (
-                          <span className="inline-block w-1.5 h-3.5 ml-1 bg-indigo-400 animate-pulse align-middle" />
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <ThinkingCard
+                    thinking={msg.thinking}
+                    thinkingTimeMs={msg.thinkingTimeMs}
+                    elapsedMs={elapsedMs}
+                    isStreaming={isLatestAssistant && !msg.content}
+                    isExpanded={isThinkingExpanded}
+                    isCopied={copiedId === `think-${msg.id}`}
+                    theme={currentTheme}
+                    subFontSize={subFontSize}
+                    codeFontSize={codeFontSize}
+                    onToggle={() => toggleThinking(msg.id, isThinkingExpanded)}
+                    onCopy={() => handleCopyText(`think-${msg.id}`, msg.thinking || '')}
+                  />
                 )}
 
                 {/* 工具调用卡片列表 */}
@@ -706,172 +818,55 @@ export const AgentPanel: React.FC = () => {
       >
         {/* 常驻待审批操作条 */}
         {pendingToolCall && (
-          <div
-            className="mb-2.5 p-2.5 rounded-lg border flex flex-col gap-2 shadow-sm transition-all animate-in fade-in slide-in-from-bottom-2 duration-150"
-            style={{
-              backgroundColor:
-                pendingToolCall.riskLevel === 'dangerous'
-                  ? 'rgba(239, 68, 68, 0.12)'
-                  : 'rgba(245, 158, 11, 0.12)',
-              borderColor:
-                pendingToolCall.riskLevel === 'dangerous' ? '#ef4444' : '#f59e0b',
-            }}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <ShieldAlert
-                  className={`w-4 h-4 shrink-0 ${
-                    pendingToolCall.riskLevel === 'dangerous'
-                      ? 'text-red-500'
-                      : 'text-amber-500'
-                  }`}
-                />
-                <span
-                  className="font-semibold truncate"
-                  style={{ color: currentTheme.ui.text, fontSize: `${subFontSize}px` }}
-                >
-                  待授权执行: {pendingToolCall.name}
-                </span>
-                <span
-                  className={`px-1.5 py-0.2 rounded font-medium text-[10px] ${
-                    pendingToolCall.riskLevel === 'dangerous'
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                  }`}
-                >
-                  {pendingToolCall.riskLevel === 'dangerous' ? '高危命令' : '需确认'}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById(`tool-call-${pendingToolCall.id}`);
-                  if (el) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  } else {
-                    // 卡片尚未提交到 DOM 时，滚动至最新消息位置
-                    scrollToBottom();
-                  }
-                }}
-                className="underline opacity-75 hover:opacity-100 cursor-pointer transition-opacity shrink-0"
-                style={{ color: currentTheme.ui.accent, fontSize: `${smallFontSize}px` }}
-                title="在上方对话中定位该卡片"
-              >
-                定位卡片
-              </button>
-            </div>
-
-            <div
-              className="font-terminal px-2 py-1 rounded border break-all max-h-20 overflow-y-auto"
-              style={{
-                backgroundColor: currentTheme.ui.inputBg,
-                borderColor: currentTheme.ui.border,
-                color: currentTheme.ui.text,
-                fontSize: `${codeFontSize}px`,
-              }}
-            >
-              {pendingToolCall.name === 'terminal_exec'
+          <ApprovalBanner
+            toolCall={pendingToolCall}
+            titlePrefix="待授权执行"
+            commandText={
+              pendingToolCall.name === 'terminal_exec'
                 ? pendingToolCall.args?.command
-                : JSON.stringify(pendingToolCall.args)}
-            </div>
-
-            {pendingToolCall.warningMessage && (
-              <div
-                className="text-amber-500 flex items-center gap-1"
-                style={{ fontSize: `${smallFontSize}px` }}
-              >
-                <span>{pendingToolCall.warningMessage}</span>
-              </div>
-            )}
-
-            <div
-              className="flex items-center justify-end gap-2 pt-1 border-t"
-              style={{ borderColor: currentTheme.ui.border }}
-            >
-              <button
-                type="button"
-                onClick={() => handleRespondApproval(false)}
-                className="px-2.5 py-1 rounded cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: currentTheme.ui.hoverBg,
-                  color: currentTheme.ui.text,
-                  fontSize: `${subFontSize}px`,
-                }}
-              >
-                拒绝
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRespondApproval(true)}
-                className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer transition-colors"
-                style={{ fontSize: `${subFontSize}px` }}
-              >
-                允许执行
-              </button>
-            </div>
-          </div>
+                : JSON.stringify(pendingToolCall.args)
+            }
+            theme={currentTheme}
+            subFontSize={subFontSize}
+            smallFontSize={smallFontSize}
+            codeFontSize={codeFontSize}
+            onLocate={() => {
+              const el = document.getElementById(`tool-call-${pendingToolCall.id}`);
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              } else {
+                scrollToBottom();
+              }
+            }}
+            onReject={() => handleRespondApproval(false)}
+            onApprove={() => handleRespondApproval(true)}
+          />
         )}
 
-        <div className="relative">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!activeTab || isThinking}
-            placeholder={
-              !activeTab
-                ? '请先连接或打开终端...'
-                : isThinking
+        <ChatComposer
+          value={input}
+          onChange={setInput}
+          onKeyDown={handleKeyDown}
+          onSend={handleSend}
+          onAbort={handleAbort}
+          disabled={!activeTab || isThinking}
+          sendDisabled={!activeTab || !input.trim()}
+          isThinking={isThinking}
+          isMac={isMac}
+          placeholder={
+            !activeTab
+              ? '请先连接或打开终端...'
+              : isThinking
                 ? 'Agent 正在执行任务中...'
                 : isMac
-                ? '向当前 Shell 描述运维任务 (Cmd + Enter 发送)...'
-                : '向当前 Shell 描述运维任务 (Ctrl + Enter 发送)...'
-            }
-            rows={2}
-            className="w-full rounded-lg p-2.5 border focus:outline-none resize-none transition-colors"
-            style={{
-              backgroundColor: currentTheme.ui.inputBg,
-              borderColor: currentTheme.ui.border,
-              color: currentTheme.ui.text,
-              fontSize: `${baseFontSize}px`,
-            }}
-          />
-          <div className="flex items-center justify-between mt-1.5">
-            <span
-              style={{
-                color: currentTheme.ui.textMuted,
-                fontSize: `${smallFontSize}px`,
-              }}
-            >
-              {isMac ? 'Cmd + Enter 发送 / Enter 换行' : 'Ctrl + Enter 发送 / Enter 换行'}
-            </span>
-            {isThinking ? (
-              <button
-                onClick={handleAbort}
-                className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded font-medium cursor-pointer flex items-center gap-1.5 transition-colors"
-                style={{ fontSize: `${subFontSize}px` }}
-                title="中止执行"
-              >
-                <Square className="w-3 h-3 fill-current" />
-                中止
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!activeTab || !input.trim()}
-                className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
-                style={{
-                  ...getPrimaryButtonStyle(currentTheme),
-                  fontSize: `${subFontSize}px`,
-                }}
-              >
-                <Send className="w-3 h-3" />
-                发送
-              </button>
-            )}
-          </div>
-        </div>
+                  ? '向当前 Shell 描述运维任务 (Cmd + Enter 发送)...'
+                  : '向当前 Shell 描述运维任务 (Ctrl + Enter 发送)...'
+          }
+          theme={currentTheme}
+          baseFontSize={baseFontSize}
+          subFontSize={subFontSize}
+          smallFontSize={smallFontSize}
+        />
       </div>
     </aside>
   );

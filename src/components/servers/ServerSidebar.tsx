@@ -14,6 +14,7 @@ import { useWorkspaceStore } from '../../stores/useWorkspaceStore';
 import { BUILTIN_THEMES } from '../../types/theme';
 import { clampSidebarWidth } from '../../lib/layout';
 import { useViewportWidth } from '../../lib/useViewportWidth';
+import { getLocalShellDisplayName } from '../../lib/platform';
 import type { ServerRecord } from '../../types';
 
 export const ServerSidebar: React.FC = () => {
@@ -279,10 +280,7 @@ export const ServerSidebar: React.FC = () => {
                 className="text-[10px] font-terminal"
                 style={{ color: currentTheme.ui.textMuted }}
               >
-                {typeof navigator !== 'undefined' &&
-                /win/i.test(navigator.platform || navigator.userAgent)
-                  ? 'PowerShell'
-                  : 'zsh/bash'}
+                {getLocalShellDisplayName()}
               </span>
             </div>
           </div>
@@ -329,7 +327,11 @@ export const ServerSidebar: React.FC = () => {
                             readOnly
                             className="accent-emerald-500 rounded shrink-0 w-3.5 h-3.5"
                           />
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              isSelected ? 'bg-emerald-500' : 'bg-zinc-500/45'
+                            }`}
+                          />
                           <span className="font-medium truncate">{srv.name}</span>
                         </div>
 
@@ -345,7 +347,10 @@ export const ServerSidebar: React.FC = () => {
                     );
                   }
 
-                  // Terminal 模式常规主机卡片
+                  // Terminal 模式常规主机卡片（以真实活动标签连接状态驱动状态灯，不再写死绿点）
+                  const serverTabs = tabs.filter((t) => t.isSsh && t.server?.id === srv.id);
+                  const isConnected = serverTabs.some((t) => t.connected);
+                  const isConnecting = serverTabs.length > 0 && !isConnected;
                   return (
                     <div
                       key={srv.id}
@@ -364,7 +369,16 @@ export const ServerSidebar: React.FC = () => {
                       }}
                     >
                       <div className="flex items-center gap-2 truncate flex-1">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            isConnected
+                              ? 'bg-emerald-500'
+                              : isConnecting
+                                ? 'bg-amber-400 animate-pulse'
+                                : 'bg-zinc-500/45'
+                          }`}
+                          title={isConnected ? '已连接' : isConnecting ? '连接中/已断开' : '未连接'}
+                        />
                         <span className="font-medium truncate">{srv.name}</span>
                       </div>
 

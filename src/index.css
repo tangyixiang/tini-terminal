@@ -59,6 +59,17 @@
 }
 
 /*
+ * 显式恢复终端及其隐藏输入域的文本选择与聚焦权限，
+ * 防止祖先容器 user-select: none 在 WebKit / WebView 中抑制 .xterm-helper-textarea 聚焦导致无法输入。
+ */
+.xterm,
+.xterm-screen,
+.xterm-helper-textarea {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+/*
  * xterm 默认把 viewport 底色写死为 #000，与主题终端底色不一致会露出黑边；
  * 同时内建滚动条会额外占用宽度，导致右侧出现与主题不协调的亮条。
  */

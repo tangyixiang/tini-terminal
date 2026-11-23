@@ -5,9 +5,11 @@ export class TerminalInputStream {
   private isFlushing = false;
   private isDisposed = false;
   private sendFn: SendTerminalInputFn;
+  private onError?: (err: Error) => void;
 
-  constructor(sendFn: SendTerminalInputFn) {
+  constructor(sendFn: SendTerminalInputFn, onError?: (err: Error) => void) {
     this.sendFn = sendFn;
+    this.onError = onError;
   }
 
   public push(data: string): void {
@@ -30,7 +32,9 @@ export class TerminalInputStream {
         await this.sendFn(chunk);
       }
     } catch (err) {
-      console.error('发送终端输入异常:', err);
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error('发送终端输入异常:', error);
+      this.onError?.(error);
     } finally {
       this.isFlushing = false;
       if (this.queue.length > 0 && !this.isDisposed) {

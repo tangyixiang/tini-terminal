@@ -1,19 +1,21 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { TerminalTab, ServerRecord } from '../types';
+import { isWindowsPlatform } from '../lib/platform';
 import { useAgentStore } from './useAgentStore';
 import { abortAgentTask, isAgentTaskRunning } from '../lib/agent/runner';
+import { terminalRuntimeManager } from '../core/terminal/TerminalRuntimeManager';
 
 interface TerminalState {
   tabs: TerminalTab[];
   activeTabId: string | null;
-  /** 真实探测到的连接延迟；未探测到时为 null，不使用固定假值 */
   latencyMs: number | null;
   openLocalTab: () => string;
   openSshTab: (server: ServerRecord) => string;
   closeTab: (id: string) => void;
   setActiveTabId: (id: string) => void;
   setTabConnected: (id: string, connected: boolean) => void;
+  setTabLatency: (id: string, latencyMs: number | null) => void;
   setLatencyMs: (ms: number | null) => void;
 }
 
@@ -24,17 +26,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   openLocalTab: () => {
     const id = 'tab-' + Math.random().toString(36).substring(2, 9);
-    const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent);
     const newTab: TerminalTab = {
       id,
       sessionId: id,
-      title: isWindows ? 'PowerShell' : 'Local Shell',
+      title: isWindowsPlatform() ? 'PowerShell' : 'Local Shell',
       isSsh: false,
       connected: true,
+      latencyMs: 0,
     };
     set((state) => ({
       tabs: [...state.tabs, newTab],
       activeTabId: id,
+      latencyMs: 0,
     }));
     return id;
   },
@@ -48,10 +51,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       isSsh: true,
       server,
       connected: false,
+      latencyMs: null,
     };
     set((state) => ({
       tabs: [...state.tabs, newTab],
       activeTabId: id,
+      latencyMs: null,
     }));
     return id;
   },
@@ -60,9 +65,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const { tabs, activeTabId } = get();
     const tab = tabs.find((t) => t.id === id);
 
-    // 关闭前先中止该会话进行中的任务，避免后台任务向已删除会话持续写入
     if (isAgentTaskRunning(id)) {
       abortAgentTask(id);
+    }
+
+    if (tab) {
+      terminalRuntimeManager.destroy(tab.sessionId);
     }
 
     if (tab && window.__TAURI_INTERNALS__) {
@@ -76,20 +84,30 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (activeTabId === id) {
       nextActiveId = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     }
+    const nextTab = remaining.find((t) => t.id === nextActiveId);
 
     set({
       tabs: remaining,
       activeTabId: nextActiveId,
+      latencyMs: nextTab?.latencyMs ?? null,
     });
   },
 
   setActiveTabId: (id: string) => {
-    set({ activeTabId: id });
+    const target = get().tabs.find((t) => t.id === id);
+    set({ activeTabId: id, latencyMs: target?.latencyMs ?? null });
   },
 
   setTabConnected: (id: string, connected: boolean) => {
     set((state) => ({
       tabs: state.tabs.map((t) => (t.id === id ? { ...t, connected } : t)),
+    }));
+  },
+
+  setTabLatency: (id: string, latencyMs: number | null) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === id ? { ...t, latencyMs } : t)),
+      latencyMs: state.activeTabId === id ? latencyMs : state.latencyMs,
     }));
   },
 

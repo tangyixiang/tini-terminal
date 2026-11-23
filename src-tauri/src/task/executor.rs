@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
 use crate::ssh::{SshConnectOptions, SshManager};
 use crate::storage::{ServerRecord, StorageManager};
 use super::model::TaskStep;
@@ -19,24 +21,35 @@ impl TaskExecutor {
         server: &ServerRecord,
         command: &str,
     ) -> Result<(i32, String, String, u64), String> {
-        let is_local = (server.host == "localhost" || server.host == "127.0.0.1") && server.username == "local";
+        let is_local =
+            (server.host == "localhost" || server.host == "127.0.0.1") && server.username == "local";
         let start = Instant::now();
 
         if is_local {
             let cmd = command.to_string();
             tokio::task::spawn_blocking(move || {
-                use std::io::Read;
                 use std::process::{Command, Stdio};
 
-                let (shell, flag) = if cfg!(target_os = "windows") {
-                    ("powershell", "-Command")
+                let mut process = if cfg!(target_os = "windows") {
+                    let utf8_cmd = format!(
+                        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false); {}",
+                        cmd
+                    );
+                    let mut c = Command::new("powershell");
+                    c.args(["-NoProfile", "-NonInteractive", "-Command", &utf8_cmd]);
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    }
+                    c
                 } else {
-                    ("sh", "-c")
+                    let mut c = Command::new("sh");
+                    c.args(["-c", &cmd]);
+                    c
                 };
 
-                let mut child = Command::new(shell)
-                    .arg(flag)
-                    .arg(&cmd)
+                let mut child = process
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()
@@ -77,22 +90,96 @@ impl TaskExecutor {
             let cmd = command.to_string();
             tokio::task::spawn_blocking(move || {
                 let sess = SshManager::establish_connection(&options)?;
-                sess.set_blocking(true);
+                sess.set_blocking(false);
 
-                let mut ch = sess
-                    .channel_session()
-                    .map_err(|e| format!("创建执行通道失败: {}", e))?;
-                ch.exec(&cmd).map_err(|e| format!("发送命令失败: {}", e))?;
+                let open_start = Instant::now();
+                let mut ch = loop {
+                    match sess.channel_session() {
+                        Ok(c) => break c,
+                        Err(e) if e.code() == ssh2::ErrorCode::Session(-37) => {
+                            if open_start.elapsed() > Duration::from_secs(10) {
+                                return Err("创建执行通道超时".to_string());
+                            }
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => return Err(format!("创建执行通道失败: {}", e)),
+                    }
+                };
 
-                use std::io::Read;
+                let exec_start = Instant::now();
+                loop {
+                    match ch.exec(&cmd) {
+                        Ok(()) => break,
+                        Err(e) if e.code() == ssh2::ErrorCode::Session(-37) => {
+                            if exec_start.elapsed() > Duration::from_secs(10) {
+                                return Err("发送命令超时".to_string());
+                            }
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => return Err(format!("发送命令失败: {}", e)),
+                    }
+                }
+
+                let timeout = Duration::from_secs(120);
                 let mut stdout_buf = Vec::new();
                 let mut stderr_buf = Vec::new();
+                let mut buf = [0u8; 4096];
 
-                let _ = ch.read_to_end(&mut stdout_buf);
-                let _ = ch.stderr().read_to_end(&mut stderr_buf);
+                loop {
+                    let mut read_any = false;
+                    match ch.read(&mut buf) {
+                        Ok(n) if n > 0 => {
+                            stdout_buf.extend_from_slice(&buf[..n]);
+                            read_any = true;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(e) => return Err(format!("读取标准输出失败: {}", e)),
+                        _ => {}
+                    }
+                    match ch.stderr().read(&mut buf) {
+                        Ok(n) if n > 0 => {
+                            stderr_buf.extend_from_slice(&buf[..n]);
+                            read_any = true;
+                        }
+                        _ => {}
+                    }
+                    if ch.eof() {
+                        while let Ok(n) = ch.read(&mut buf) {
+                            if n == 0 {
+                                break;
+                            }
+                            stdout_buf.extend_from_slice(&buf[..n]);
+                        }
+                        while let Ok(n) = ch.stderr().read(&mut buf) {
+                            if n == 0 {
+                                break;
+                            }
+                            stderr_buf.extend_from_slice(&buf[..n]);
+                        }
+                        break;
+                    }
+                    if !read_any {
+                        if exec_start.elapsed() > timeout {
+                            return Err(format!("远程命令执行超时 ({}s)", timeout.as_secs()));
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
 
-                let _ = ch.wait_close();
-                // 取不到退出码说明通道异常终止，不能默认按成功处理
+                let close_start = Instant::now();
+                loop {
+                    match ch.wait_close() {
+                        Ok(()) => break,
+                        Err(e) if e.code() == ssh2::ErrorCode::Session(-37) => {
+                            if close_start.elapsed() > Duration::from_secs(5) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+
                 let code = ch.exit_status().map_err(|e| {
                     format!("无法获取远程命令退出码，通道可能已异常关闭: {}", e)
                 })?;
@@ -131,7 +218,11 @@ impl TaskExecutor {
                         host_id: srv_id,
                         host_name: srv_name,
                         command: cmd,
-                        status: if code == 0 { "completed".to_string() } else { "failed".to_string() },
+                        status: if code == 0 {
+                            "completed".to_string()
+                        } else {
+                            "failed".to_string()
+                        },
                         stdout,
                         stderr,
                         exit_code: Some(code),

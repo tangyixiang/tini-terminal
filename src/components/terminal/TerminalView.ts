@@ -1,25 +1,26 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { SearchAddon } from '@xterm/addon-search';
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { invoke } from '@tauri-apps/api/core';
 import '@xterm/xterm/css/xterm.css';
+import { getDefaultTerminalFontFamily } from '../../lib/platform';
 
 export interface TerminalViewOptions {
   fontSize?: number;
   theme?: ITheme;
+  enableWebgl?: boolean;
 }
 
-/**
- * 使用与 xterm 相同的 canvas 度量方式获取字符高度（ascent + descent）。
- * 这是 xterm 在支持 TextMetrics 时的首选度量策略，避免依赖其内部私有字段。
- */
 let measureCtx: CanvasRenderingContext2D | null = null;
 function measureCharHeight(fontFamily: string, fontSize: number): number | null {
   try {
     if (!measureCtx) {
-      const canvas = typeof OffscreenCanvas !== 'undefined'
-        ? new OffscreenCanvas(8, 8)
-        : document.createElement('canvas');
+      const canvas =
+        typeof OffscreenCanvas !== 'undefined'
+          ? new OffscreenCanvas(8, 8)
+          : document.createElement('canvas');
       measureCtx = (canvas.getContext('2d') as CanvasRenderingContext2D | null) ?? null;
     }
     if (!measureCtx) return null;
@@ -31,20 +32,12 @@ function measureCharHeight(fontFamily: string, fontSize: number): number | null 
     if (typeof ascent === 'number' && typeof descent === 'number' && ascent + descent > 0) {
       return ascent + descent;
     }
-    // 退回行高近似值（多数等宽字体的 em 行高约为 1.2 倍字号）
     return fontSize * 1.2;
   } catch {
     return fontSize * 1.2;
   }
 }
 
-/**
- * xterm 的单元格高度按设备像素计算：
- *   cellHeight(device) = floor(ceil(charHeight × dpr) × lineHeight)
- *   cellHeight(css)    = cellHeight(device) / dpr
- * dpr=2、fontSize=14 时常见结果是 23.5px 这类半像素行高，行间亚像素缝隙会让字形
- * 相互渗入，表现为文字重叠与错行。反解 lineHeight 让 CSS 行高精确落在整数像素。
- */
 function resolveIntegerLineHeight(
   charHeightDevice: number,
   fontSize: number,
@@ -53,7 +46,6 @@ function resolveIntegerLineHeight(
   if (!Number.isFinite(charHeightDevice) || charHeightDevice <= 0) return null;
   const targetCss = Math.max(fontSize + 1, Math.round(fontSize * 1.45));
   const targetDevice = Math.round(targetCss * dpr);
-  // +0.5 保证 floor() 恰好取到目标整数值
   const ratio = (targetDevice + 0.5) / charHeightDevice;
   if (!Number.isFinite(ratio)) return null;
   return Number(Math.min(1.8, Math.max(1.05, ratio)).toFixed(4));
@@ -64,16 +56,13 @@ export class TerminalView {
   private fitAddon: FitAddon;
   private searchAddon: SearchAddon;
   private webLinksAddon: WebLinksAddon;
+  private webglAddon: WebglAddon | null = null;
+  private enableWebgl: boolean;
   private isDisposed = false;
 
   constructor(options?: TerminalViewOptions) {
-    const isWindows =
-      typeof navigator !== 'undefined' &&
-      /win/i.test(navigator.platform || navigator.userAgent);
-
-    const terminalFontFamily = isWindows
-      ? "'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace"
-      : "Menlo, Monaco, 'PingFang SC', monospace";
+    this.enableWebgl = options?.enableWebgl !== false;
+    const terminalFontFamily = getDefaultTerminalFontFamily();
 
     this.term = new Terminal({
       fontFamily: terminalFontFamily,
@@ -85,7 +74,6 @@ export class TerminalView {
       cursorWidth: 2,
       allowProposedApi: true,
       scrollback: 10000,
-      // 保留给 WebGL 渲染器使用；当前默认 DOM 渲染器会忽略此项
       rescaleOverlappingGlyphs: true,
       drawBoldTextInBrightColors: true,
       smoothScrollDuration: 0,
@@ -95,7 +83,14 @@ export class TerminalView {
 
     this.fitAddon = new FitAddon();
     this.searchAddon = new SearchAddon();
-    this.webLinksAddon = new WebLinksAddon();
+    // 使用原生系统浏览器打开终端中的链接，解决 Tauri WebView 默认拦截 window.open 的问题
+    this.webLinksAddon = new WebLinksAddon((_event, uri) => {
+      if (window.__TAURI_INTERNALS__) {
+        invoke('open_external_url', { url: uri }).catch(() => {});
+      } else {
+        window.open(uri, '_blank', 'noopener,noreferrer');
+      }
+    });
 
     this.term.loadAddon(this.fitAddon);
     this.term.loadAddon(this.searchAddon);
@@ -118,21 +113,27 @@ export class TerminalView {
     if (this.isDisposed) return;
     this.term.open(container);
     this.applyIntegerLineHeight();
+
+    // 启用 WebGL GPU 加速渲染；在 Linux Wayland / 虚拟机 / 无 GPU 环境下自动优雅降级至 DOM 渲染器
+    if (this.enableWebgl) {
+      try {
+        const addon = new WebglAddon();
+        addon.onContextLoss(() => {
+          try {
+            addon.dispose();
+          } catch {}
+          if (this.webglAddon === addon) {
+            this.webglAddon = null;
+          }
+        });
+        this.term.loadAddon(addon);
+        this.webglAddon = addon;
+      } catch {
+        this.webglAddon = null;
+      }
+    }
   }
 
-  /**
-   * 依据实际字体度量把行高归整为整数 CSS 像素。
-   *
-   * xterm(DOM 渲染器) 的行高计算链路是：
-   *   charHeight(device) = ceil(字体 ascent+descent × dpr)
-   *   cellHeight(device) = floor(charHeight(device) × lineHeight)
-   *   cellHeight(css)    = cellHeight(device) / dpr
-   * 因此 lineHeight=1.45 在 dpr=2 时会得到 23.5px 这类半像素行高，
-   * 行间亚像素缝隙就是文字重叠/错行（尤其输入行压住上一行输出）的根源。
-   * 这里反解一个 lineHeight，使 cellHeight(css) 恰好落在整数像素上。
-   *
-   * @returns 是否实际调整了行高（调用方据此决定是否重新 fit）
-   */
   public applyIntegerLineHeight(): boolean {
     if (this.isDisposed) return false;
     try {
@@ -161,13 +162,69 @@ export class TerminalView {
       const before = { cols: this.term.cols, rows: this.term.rows };
       this.fitAddon.fit();
       const after = { cols: this.term.cols, rows: this.term.rows };
-      // 行列发生变化时强制整屏重绘，清除 resize 前残留的旧画布帧，避免字符叠加
       if (before.cols !== after.cols || before.rows !== after.rows) {
         this.term.refresh(0, Math.max(0, after.rows - 1));
       }
       return after;
     } catch {
       return null;
+    }
+  }
+
+  public findNext(term: string, options?: ISearchOptions): boolean {
+    if (this.isDisposed || !term) return false;
+    return this.searchAddon.findNext(term, {
+      decorations: {
+        matchBackground: '#eab30855',
+        matchOverviewRuler: '#eab308',
+        activeMatchBackground: '#f97316aa',
+        activeMatchColorOverviewRuler: '#f97316',
+      },
+      ...options,
+    });
+  }
+
+  public findPrevious(term: string, options?: ISearchOptions): boolean {
+    if (this.isDisposed || !term) return false;
+    return this.searchAddon.findPrevious(term, {
+      decorations: {
+        matchBackground: '#eab30855',
+        matchOverviewRuler: '#eab308',
+        activeMatchBackground: '#f97316aa',
+        activeMatchColorOverviewRuler: '#f97316',
+      },
+      ...options,
+    });
+  }
+
+  public clearSearch(): void {
+    if (this.isDisposed) return;
+    try {
+      this.searchAddon.clearDecorations();
+    } catch {}
+  }
+
+  /** 读取当前活动缓冲区末尾 N 行纯文本，供 AI 感知终端现场 */
+  public getRecentBufferText(maxLines = 45): string {
+    if (this.isDisposed) return '';
+    try {
+      const buf = this.term.buffer.active;
+      const total = buf.length;
+      const start = Math.max(0, total - maxLines);
+      const lines: string[] = [];
+      for (let i = start; i < total; i++) {
+        const line = buf.getLine(i);
+        if (line) {
+          lines.push(line.translateToString(true));
+        }
+      }
+      // 去除尾部连续空行
+      while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+        lines.pop();
+      }
+      return lines.join('\n');
+    } catch {
+      return '';
     }
   }
 
@@ -208,9 +265,11 @@ export class TerminalView {
     return this.term.getSelection() || '';
   }
 
+  /** 规范化 Windows 剪贴板 CRLF (\r\n) 换行，避免粘入远程 Linux/vim 产生多余空行或 ^M */
   public paste(text: string): void {
     if (this.isDisposed || !text) return;
-    this.term.paste(text);
+    const normalized = text.replace(/\r\n/g, '\n');
+    this.term.paste(normalized);
   }
 
   public write(data: string | Uint8Array): void {
@@ -231,7 +290,6 @@ export class TerminalView {
   public setFontSize(fontSize: number): void {
     if (this.isDisposed) return;
     this.term.options.fontSize = fontSize;
-    // 字号变化会改变字符度量，行高需重新归整为整数像素
     this.applyIntegerLineHeight();
   }
 
@@ -245,6 +303,10 @@ export class TerminalView {
   public dispose(): void {
     if (this.isDisposed) return;
     this.isDisposed = true;
+    try {
+      this.webglAddon?.dispose();
+    } catch {}
+    this.webglAddon = null;
     try {
       this.term.dispose();
     } catch {}

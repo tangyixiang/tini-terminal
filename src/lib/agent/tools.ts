@@ -1,6 +1,9 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { useTerminalStore } from '../../stores/useTerminalStore';
-import type { SafetyCheckResult, SafetyLevel, SftpListResult } from '../../types';
+import { useAgentStore } from '../../stores/useAgentStore';
+import { isWindowsPlatform } from '../platform';
+import { runCommandInInteractivePty } from '../terminal/ptyBridge';
+import type { SafetyCheckResult, SafetyLevel, SessionContext, SftpListResult } from '../../types';
 import { formatCommandExitOutput, isDiagnosticCommand } from './commandUtils';
 
 export { isDiagnosticCommand };
@@ -11,13 +14,13 @@ export const AGENT_TOOLS = [
     function: {
       name: 'terminal_exec',
       description:
-        '在目标服务器上执行 Linux shell 指令并捕获真实标准输出及错误。注意：创建大型运维脚本必须使用 file_write 写入，再通过本工具授予执行权限并运行；执行部署或变更后必须使用本工具进行状态闭环验证。',
+        '在目标主机或本地终端执行 Shell 指令并获取真实标准输出与退出码。编写脚本/配置文件请优先用 file_write，再通过本工具运行与闭环验证。',
       parameters: {
         type: 'object',
         properties: {
           command: {
             type: 'string',
-            description: '待执行的 Linux shell 指令，如 docker ps、ss -lntp、systemctl status xxx 等',
+            description: '待执行的 Shell 指令，如 docker ps、ss -lntp、systemctl status xxx 等',
           },
         },
         required: ['command'],
@@ -28,13 +31,13 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'file_read',
-      description: '读取远程服务器指定路径的文本文件内容',
+      description: '读取目标主机或本地指定路径的文本文件内容',
       parameters: {
         type: 'object',
         properties: {
           path: {
             type: 'string',
-            description: '远程文件绝对路径，如 /etc/nginx/nginx.conf',
+            description: '文件绝对路径，如 /etc/nginx/nginx.conf',
           },
         },
         required: ['path'],
@@ -46,13 +49,13 @@ export const AGENT_TOOLS = [
     function: {
       name: 'file_write',
       description:
-        '在目标服务器上创建、修改或覆盖指定路径的文件内容（系统会自动创建父级目录）。编写运维脚本、服务管理脚本、配置文件等必须真实调用此工具写入磁盘，严禁仅在回复文本中假装部署！',
+        '在目标主机或本地创建、修改或覆盖指定路径的文件内容（自动创建父级目录）。写脚本、配置文件必须真实调用此工具写入磁盘。',
       parameters: {
         type: 'object',
         properties: {
           path: {
             type: 'string',
-            description: '目标文件绝对路径，如 /usr/local/bin/workbuddy 或 /home/soft/service.sh',
+            description: '目标文件绝对路径，如 /usr/local/bin/deploy.sh',
           },
           content: {
             type: 'string',
@@ -67,7 +70,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'file_list',
-      description: '列出远程服务器指定目录下的所有文件与子目录详情',
+      description: '列出目标主机或本地指定目录下的所有文件与子目录详情',
       parameters: {
         type: 'object',
         properties: {
@@ -84,7 +87,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'system_info',
-      description: '快速收集远程主机的 OS 版本、内核、运行时间、CPU 与内存基本信息',
+      description: '快速收集目标主机或本机的 OS 版本、内核、运行时间、CPU 与内存基本信息',
       parameters: {
         type: 'object',
         properties: {},
@@ -93,7 +96,18 @@ export const AGENT_TOOLS = [
   },
 ];
 
+async function fetchSessionContext(sessionId: string): Promise<SessionContext | null> {
+  if (!window.__TAURI_INTERNALS__) return null;
+  try {
+    return await invoke<SessionContext | null>('get_session_context', { sessionId });
+  } catch {
+    return null;
+  }
+}
 
+function shellQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
 
 export async function executeToolCall(
   sessionId: string,
@@ -108,26 +122,42 @@ export async function executeToolCall(
     };
   }
 
-  // 依据终端会话精确判定目标环境，禁止猜测
-  const resolveTarget = (): { isLocal: boolean } | { error: string } => {
+  const resolveTarget = (): { isLocal: boolean; loginUser?: string } | { error: string } => {
     const currentTab = useTerminalStore
       .getState()
       .tabs.find((t) => t.sessionId === sessionId || t.id === sessionId);
     if (!currentTab) {
       return { error: `未找到终端会话 ${sessionId}，请确认标签页仍然存在` };
     }
-    return { isLocal: !currentTab.isSsh };
+    return { isLocal: !currentTab.isSsh, loginUser: currentTab.server?.username };
   };
 
   try {
     switch (toolName) {
       case 'terminal_exec': {
-        const cmd = args.command as string;
+        const cmd = String(args.command || '');
         const target = resolveTarget();
         if ('error' in target) {
           return { stdout: target.error, isError: true };
         }
 
+        const execMode = useAgentStore.getState().executionMode;
+
+        // 终端内联 PTY 模式：直接写入用户当前交互式 Shell，100% 继承 su / sudo -i / cd / env / 跳板机上下文
+        if (execMode === 'pty') {
+          const ptyRes = await runCommandInInteractivePty(sessionId, cmd, onStream);
+          if (ptyRes.exitCode === 0) {
+            return { stdout: ptyRes.stdout || '(命令执行成功，无额外输出)' };
+          }
+          const isDiag = isDiagnosticCommand(cmd);
+          return {
+            stdout: formatCommandExitOutput(ptyRes.exitCode, ptyRes.stdout, '', isDiag),
+            isError: !isDiag,
+          };
+        }
+
+        // 隔离 Exec 模式：自动携带当前终端追踪到的 cwd，减少目录割裂感
+        const ctx = await fetchSessionContext(sessionId);
         const channel = new Channel<{ stream: string; data: string }>();
         channel.onmessage = (payload) => {
           if (onStream && payload?.data) {
@@ -135,65 +165,72 @@ export async function executeToolCall(
           }
         };
 
-        const res = target.isLocal
-          ? await invoke<{
-              exit_code: number;
-              stdout: string;
-              stderr: string;
-              duration_ms: number;
-            }>('exec_local_command', {
-              command: cmd,
-              channel,
-            })
-          : await invoke<{
-              exit_code: number;
-              stdout: string;
-              stderr: string;
-              duration_ms: number;
-            }>('ssh_exec_command', {
-              sessionId,
-              command: cmd,
-              channel,
-            });
+        let res: { exit_code: number; stdout: string; stderr: string; duration_ms: number };
+        if (target.isLocal) {
+          res = await invoke('exec_local_command', {
+            command: cmd,
+            cwd: ctx?.cwd || null,
+            channel,
+          });
+        } else {
+          // 若当前终端目录已知（非空且为合法 POSIX 路径），先 cd 再执行，保持目录一致
+          const effectiveCmd =
+            ctx?.cwd && ctx.cwd.startsWith('/')
+              ? `cd ${shellQuote(ctx.cwd)} 2>/dev/null || true; ${cmd}`
+              : cmd;
+          res = await invoke('ssh_exec_command', {
+            sessionId,
+            command: effectiveCmd,
+            channel,
+          });
+        }
 
         if (res.exit_code === 0) {
           return { stdout: res.stdout || '(命令执行成功，无额外输出)' };
-        } else {
-          // 探测性命令（如 grep、test、[ ]、pidof、diff 等）非零退出码仅代表匹配结果或分支判断，不代表运维指令执行失败
-          const isDiag = isDiagnosticCommand(cmd);
-          return {
-            stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, isDiag),
-            isError: !isDiag,
-          };
         }
+        const isDiag = isDiagnosticCommand(cmd);
+        return {
+          stdout: formatCommandExitOutput(res.exit_code, res.stdout, res.stderr, isDiag),
+          isError: !isDiag,
+        };
       }
 
       case 'file_read': {
-        const path = args.path as string;
-        const content = await invoke<string>('sftp_read_file', {
-          sessionId,
-          remotePath: path,
-        });
+        const path = String(args.path || '');
+        const target = resolveTarget();
+        if ('error' in target) {
+          return { stdout: target.error, isError: true };
+        }
+        const content = target.isLocal
+          ? await invoke<string>('local_read_file', { path })
+          : await invoke<string>('sftp_read_file', { sessionId, remotePath: path });
         return { stdout: content };
       }
 
       case 'file_write': {
-        const path = args.path as string;
-        const content = args.content as string;
-        await invoke('sftp_write_file', {
-          sessionId,
-          remotePath: path,
-          content,
-        });
+        const path = String(args.path || '');
+        const content = String(args.content ?? '');
+        const target = resolveTarget();
+        if ('error' in target) {
+          return { stdout: target.error, isError: true };
+        }
+        if (target.isLocal) {
+          await invoke('local_write_file', { path, content });
+        } else {
+          await invoke('sftp_write_file', { sessionId, remotePath: path, content });
+        }
         return { stdout: `文件写入成功: ${path}` };
       }
 
       case 'file_list': {
-        const path = args.path as string;
-        const res = await invoke<SftpListResult>('sftp_list_dir', {
-          sessionId,
-          remotePath: path,
-        });
+        const path = String(args.path || '');
+        const target = resolveTarget();
+        if ('error' in target) {
+          return { stdout: target.error, isError: true };
+        }
+        const res = target.isLocal
+          ? await invoke<SftpListResult>('local_list_dir', { path })
+          : await invoke<SftpListResult>('sftp_list_dir', { sessionId, remotePath: path });
         const formatted = (res.files || [])
           .map(
             (item) =>
@@ -208,9 +245,13 @@ export async function executeToolCall(
         if ('error' in target) {
           return { stdout: target.error, isError: true };
         }
-        const cmd = 'uname -a && uptime && (free -m 2>/dev/null || top -l 1 | head -n 10)';
 
-        // 显式提供 channel，与后端命令签名保持一致
+        // 按操作系统区分本机信息采集指令（修复 Windows 本地终端运行 uname/free 必报错问题）
+        const isWinLocal = target.isLocal && isWindowsPlatform();
+        const cmd = isWinLocal
+          ? '$os = Get-CimInstance Win32_OperatingSystem; $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1; "OS: $($os.Caption) ($($os.Version))"; "CPU: $($cpu.Name) ($($cpu.NumberOfLogicalProcessors) threads)"; "Memory: Free $([math]::Round($os.FreePhysicalMemory/1MB,2)) GB / Total $([math]::Round($os.TotalVisibleMemorySize/1MB,2)) GB"; "LastBoot: $($os.LastBootUpTime)"'
+          : 'uname -a && uptime && (free -m 2>/dev/null || vm_stat 2>/dev/null || top -l 1 | head -n 10)';
+
         const channel = new Channel<{ stream: string; data: string }>();
         channel.onmessage = (payload) => {
           if (onStream && payload?.data) {
@@ -221,7 +262,7 @@ export async function executeToolCall(
         const res = target.isLocal
           ? await invoke<{ exit_code: number; stdout: string; stderr: string }>(
               'exec_local_command',
-              { command: cmd, channel }
+              { command: cmd, cwd: null, channel }
             )
           : await invoke<{ exit_code: number; stdout: string; stderr: string }>(
               'ssh_exec_command',

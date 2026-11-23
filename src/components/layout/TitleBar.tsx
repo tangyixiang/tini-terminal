@@ -7,12 +7,17 @@ import {
   Palette,
   PanelLeftClose,
   PanelLeft,
+  Minus,
+  Square,
+  Copy,
+  X,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { BUILTIN_THEMES, getPrimaryButtonStyle, type ThemeId } from '../../types/theme';
+import { isMacPlatform } from '../../lib/platform';
 
 export const TitleBar: React.FC = () => {
   const { tabs, activeTabId } = useTerminalStore();
@@ -31,11 +36,31 @@ export const TitleBar: React.FC = () => {
   } = useSettingsStore();
 
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
   const headerRef = useRef<HTMLElement>(null);
   const themeMenuRef = useRef<HTMLDivElement>(null);
+  const isMac = isMacPlatform();
 
-  // 点击界面任意外部位置，自动关闭主题选择浮层
+  // Windows / Linux 方案 A：同步窗口最大化状态以切换最大化/还原图标
+  useEffect(() => {
+    if (isMac || !window.__TAURI_INTERNALS__) return;
+    const syncMax = async () => {
+      try {
+        const maximized = await invoke<boolean>('is_window_maximized');
+        setIsMaximized(maximized);
+      } catch {
+        try {
+          const maximized = await getCurrentWindow().isMaximized();
+          setIsMaximized(maximized);
+        } catch {}
+      }
+    };
+    syncMax();
+    window.addEventListener('resize', syncMax);
+    return () => window.removeEventListener('resize', syncMax);
+  }, [isMac]);
+
   useEffect(() => {
     if (!isThemeMenuOpen) return;
     const handleOutsideClick = (e: PointerEvent) => {
@@ -49,40 +74,62 @@ export const TitleBar: React.FC = () => {
     };
   }, [isThemeMenuOpen]);
 
+  const handleMinimize = async () => {
+    try {
+      await getCurrentWindow().minimize();
+    } catch {
+      invoke('minimize_window').catch(() => {});
+    }
+  };
+
+  const handleToggleMaximize = async () => {
+    try {
+      await getCurrentWindow().toggleMaximize();
+      const max = await getCurrentWindow().isMaximized();
+      setIsMaximized(max);
+    } catch {
+      try {
+        await invoke('toggle_maximize_window');
+        const max = await invoke<boolean>('is_window_maximized');
+        setIsMaximized(max);
+      } catch {}
+    }
+  };
+
+  const handleClose = async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch {
+      invoke('close_window').catch(() => {});
+    }
+  };
+
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
 
     const handleMouseDown = async (e: MouseEvent) => {
-      // 仅响应鼠标左键
       if (e.button !== 0) return;
       const target = e.target as HTMLElement | null;
       if (!target) return;
 
-      // 排除可交互元素
-      if (target.closest('button, a, input, select, textarea, [data-tauri-drag-region="false"], [data-tauri-no-drag]')) {
+      if (
+        target.closest(
+          'button, a, input, select, textarea, [data-tauri-drag-region="false"], [data-tauri-no-drag]'
+        )
+      ) {
         return;
       }
 
       if (e.detail === 2) {
-        try {
-          const appWindow = getCurrentWindow();
-          await appWindow.toggleMaximize();
-        } catch {
-          try {
-            await invoke('toggle_maximize_window');
-          } catch {}
-        }
+        await handleToggleMaximize();
         return;
       }
 
       try {
-        const appWindow = getCurrentWindow();
-        await appWindow.startDragging();
+        await getCurrentWindow().startDragging();
       } catch {
-        try {
-          await invoke('drag_window');
-        } catch {}
+        invoke('drag_window').catch(() => {});
       }
     };
 
@@ -92,18 +139,22 @@ export const TitleBar: React.FC = () => {
     };
   }, []);
 
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
   return (
     <header
       ref={headerRef}
       data-tauri-drag-region="deep"
-      className="h-10 border-b flex items-center justify-between pl-[76px] pr-3 shrink-0 select-none cursor-default relative transition-colors duration-200"
+      className={`h-10 border-b flex items-center justify-between ${
+        isMac ? 'pl-[76px] pr-3' : 'pl-3 pr-0'
+      } shrink-0 select-none cursor-default relative transition-colors duration-200`}
       style={{
         backgroundColor: currentTheme.ui.headerBg,
         borderColor: currentTheme.ui.border,
         color: currentTheme.ui.text,
       }}
     >
-      {/* 左侧：应用标识、版本与主机栏折叠按钮 */}
+      {/* 左侧：应用标识与主机栏折叠按钮 */}
       <div
         data-tauri-drag-region="deep"
         className="flex items-center gap-2 mr-3 shrink-0 py-1"
@@ -137,15 +188,15 @@ export const TitleBar: React.FC = () => {
         </span>
       </div>
 
-      {/* 中间：原生安全拖拽区域与当前会话居中展示 */}
+      {/* 中间：原生拖拽区与当前会话居中胶囊 */}
       <div
         data-tauri-drag-region="deep"
-        className="flex-1 flex items-center justify-center h-full px-4"
+        className="flex-1 flex items-center justify-center h-full px-4 min-w-0"
       >
-        {tabs.find((t) => t.id === activeTabId) && (
+        {activeTab && (
           <div
             data-tauri-drag-region="deep"
-            className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-terminal transition-colors"
+            className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-terminal transition-colors max-w-full"
             style={{
               backgroundColor: currentTheme.ui.hoverBg,
               color: currentTheme.ui.text,
@@ -154,33 +205,27 @@ export const TitleBar: React.FC = () => {
             <span
               data-tauri-drag-region="deep"
               className={`w-2 h-2 rounded-full shrink-0 ${
-                tabs.find((t) => t.id === activeTabId)?.connected
-                  ? 'bg-emerald-400'
-                  : 'bg-amber-400 animate-pulse'
+                activeTab.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
               }`}
             />
             <span
               data-tauri-drag-region="deep"
               className="font-medium max-w-[320px] truncate"
             >
-              {(() => {
-                const activeTab = tabs.find((t) => t.id === activeTabId);
-                return activeTab?.isSsh && activeTab.server
-                  ? `${activeTab.server.username}@${activeTab.server.name} (${activeTab.server.host})`
-                  : 'Local Shell';
-              })()}
+              {activeTab.isSsh && activeTab.server
+                ? `${activeTab.server.username}@${activeTab.server.name} (${activeTab.server.host})`
+                : activeTab.title}
             </span>
           </div>
         )}
       </div>
 
-      {/* 右侧：全局动作按钮 */}
+      {/* 右侧：全局动作按钮 + Windows/Linux 原生窗口控制按钮 */}
       <div
         data-tauri-no-drag
         data-tauri-drag-region="false"
-        className="flex items-center gap-2 shrink-0 ml-2"
+        className="flex items-center gap-2 shrink-0 ml-2 h-full"
       >
-        {/* 终端字号快捷微调 */}
         <div
           className="flex items-center rounded border px-1.5 py-0.5 text-xs mr-0.5"
           style={{
@@ -212,7 +257,6 @@ export const TitleBar: React.FC = () => {
           </button>
         </div>
 
-        {/* 快捷主题切换菜单 */}
         <div className="relative" ref={themeMenuRef}>
           <button
             onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
@@ -256,9 +300,7 @@ export const TitleBar: React.FC = () => {
                     }}
                     className="w-full text-left px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors"
                     style={{
-                      backgroundColor: active
-                        ? currentTheme.ui.hoverBg
-                        : 'transparent',
+                      backgroundColor: active ? currentTheme.ui.hoverBg : 'transparent',
                       color: active ? currentTheme.ui.accent : currentTheme.ui.text,
                     }}
                   >
@@ -327,6 +369,42 @@ export const TitleBar: React.FC = () => {
         >
           <Settings className="w-4 h-4" />
         </button>
+
+        {/* Windows / Linux 方案 A 自绘窗口控制按钮 */}
+        {!isMac && (
+          <div
+            className="flex items-center h-full ml-1 border-l"
+            style={{ borderColor: currentTheme.ui.border }}
+          >
+            <button
+              type="button"
+              onClick={handleMinimize}
+              className="h-full px-3 flex items-center justify-center cursor-pointer hover:bg-white/10 transition-colors"
+              style={{ color: currentTheme.ui.text }}
+              title="最小化"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleMaximize}
+              className="h-full px-3 flex items-center justify-center cursor-pointer hover:bg-white/10 transition-colors"
+              style={{ color: currentTheme.ui.text }}
+              title={isMaximized ? '向下还原' : '最大化'}
+            >
+              {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="h-full px-3 flex items-center justify-center cursor-pointer hover:bg-red-600 hover:text-white transition-colors"
+              style={{ color: currentTheme.ui.text }}
+              title="关闭"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

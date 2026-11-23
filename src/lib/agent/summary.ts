@@ -7,8 +7,8 @@ const RESULT_OUTPUT_LINE_LIMIT = 40;
 const DIGEST_TOTAL_LIMIT = 12000;
 const DIGEST_ITEM_LIMIT = 20;
 
-/** 结论中「状态与验证」字段的最低实质内容长度，低于该长度视为残句 */
-export const CONCLUSION_DETAIL_MIN_CHARS = 20;
+/** 实质性结论的最低有效字符数（过滤纯标点、极短过渡语或空壳模板） */
+export const SUBSTANTIVE_CONCLUSION_MIN_CHARS = 24;
 
 const STATUS_LABELS: Record<ToolCallItem['status'], string> = {
   pending: '待执行',
@@ -20,15 +20,17 @@ const STATUS_LABELS: Record<ToolCallItem['status'], string> = {
 
 const WRITE_TOOL_NAMES = new Set(['file_write', 'host_file_write', 'host_transfer']);
 
-/** 结论标题：任意层级，允许「最终/运维/执行」等修饰词 */
+/** 结论标题：兼容 Markdown 加粗与各级标题 */
 const CONCLUSION_HEADING_SOURCE =
-  '^[ \\t]*#{1,6}[ \\t]*[^\\n]{0,10}(?:执行结论|最终结论|运维结论|执行报告|任务总结|执行总结)[ \\t]*$';
+  '^[ \\t]*(?:#{1,6}[ \\t]*|\\*{2})[^\\n]{0,12}(?:执行结论|最终结论|运维结论|执行报告|任务总结|执行总结|排查结论|结果汇总)\\*{0,2}[ \\t]*$';
 
+/** 兼容 `- **目标达成情况**: ...` / `- 目标达成情况：...` */
 const ACHIEVEMENT_FIELD_PATTERN =
-  /^[ \t]*(?:[-*+][ \t]*)?(?:目标达成情况|总体达成情况|整体达成情况|达成情况|最终状态|任务状态)[ \t]*[:：][ \t]*(.*)$/m;
+  /^[ \t]*(?:[-*+][ \t]*)?\*{0,2}(?:目标达成情况|总体达成情况|整体达成情况|达成情况|最终状态|任务状态)\*{0,2}[ \t]*[:：][ \t]*(.*)$/m;
 
+/** 兼容多行列表/表格：冒号后同行内容或紧随其后的非空内容 */
 const VERIFICATION_FIELD_PATTERN =
-  /^[ \t]*(?:[-*+][ \t]*)?(?:关键状态与验证|节点状态与验证|状态与验证|最终验证|验证结果)[ \t]*[:：][ \t]*(.*)$/m;
+  /^[ \t]*(?:[-*+][ \t]*)?\*{0,2}(?:关键状态与验证|节点状态与验证|状态与验证|最终验证|验证结果|核心发现与数据|核查结果)\*{0,2}[ \t]*[:：][ \t]*(.*)$/m;
 
 function describeToolTarget(toolCall: ToolCallItem): string {
   const args = toolCall.args || {};
@@ -38,27 +40,30 @@ function describeToolTarget(toolCall: ToolCallItem): string {
   if (typeof args.path === 'string' && args.path.trim()) {
     return args.path.trim();
   }
+  if (typeof args.src_path === 'string' && typeof args.dst_path === 'string') {
+    return `${args.src_path} -> ${args.dst_path}`;
+  }
   return '';
 }
 
 /** 去除 ANSI 控制码，避免终端着色污染结论摘要 */
-function stripAnsi(text: string): string {
+export function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+  return text.replace(/\u001b\[[0-9;?]*[A-Za-z]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '');
 }
 
 /**
- * 保留工具输出的原始换行与表格结构
- * 表格、进程列表被压成单行后会丢失可引用的真实数据，因此仅做行数/长度裁剪
+ * 保留工具输出的原始换行与表格结构，仅做行数/长度裁剪
  */
 function describeToolOutput(toolCall: ToolCallItem, limit = RESULT_PREVIEW_LIMIT): string {
   const raw = stripAnsi(toolCall.result || '').replace(/\r\n?/g, '\n').trim();
   if (!raw) return '';
 
-  let lines = raw.split('\n');
+  const allLines = raw.split('\n');
+  let lines = allLines;
   if (lines.length > RESULT_OUTPUT_LINE_LIMIT) {
     lines = lines.slice(0, RESULT_OUTPUT_LINE_LIMIT);
-    lines.push(`... 其余 ${raw.split('\n').length - RESULT_OUTPUT_LINE_LIMIT} 行已省略`);
+    lines.push(`... 其余 ${allLines.length - RESULT_OUTPUT_LINE_LIMIT} 行已省略`);
   }
 
   let text = lines.join('\n');
@@ -70,7 +75,6 @@ function describeToolOutput(toolCall: ToolCallItem, limit = RESULT_PREVIEW_LIMIT
 
 /**
  * 汇总本轮真实工具执行状态，作为模型判定最终结论的事实依据
- * 仅呈现真实执行结果，不注入任何主观定性
  */
 export function buildToolExecutionDigest(toolCalls: ToolCallItem[]): string {
   if (toolCalls.length === 0) return '（本轮未执行任何工具调用）';
@@ -85,12 +89,10 @@ export function buildToolExecutionDigest(toolCalls: ToolCallItem[]): string {
 
   const recent = toolCalls.slice(-DIGEST_ITEM_LIMIT);
   const offset = toolCalls.length - recent.length;
-  // 摘要总长度上限，避免超长输出撑爆结论请求的上下文
   let budget = DIGEST_TOTAL_LIMIT - lines[0].length;
   recent.forEach((toolCall, index) => {
     const host = toolCall.hostName ? `[${toolCall.hostName}] ` : '';
     const target = describeToolTarget(toolCall);
-    // 非末尾步骤的失败会标注后续仍有成功步骤，避免被误判为最终未完成
     const hasLaterSuccess =
       toolCall.status === 'failed' &&
       toolCalls.slice(offset + index + 1).some((t) => t.status === 'success');
@@ -123,8 +125,38 @@ export interface ConclusionCheckOptions {
 }
 
 /**
- * 判断结论是否真正闭环
- * 要求：存在结论标题、达成情况有实值、状态与验证有足够实质内容，且未被截断
+ * 提取某字段之后（包含同行与后续缩进/子列表行）的实质内容
+ */
+function extractFieldBody(content: string, pattern: RegExp): string {
+  const match = pattern.exec(content);
+  if (!match) return '';
+  const sameLine = (match[1] || '').trim();
+  if (sameLine && !isPlaceholderValue(sameLine)) {
+    return sameLine;
+  }
+  // 兼容模型把验证结果写成冒号下一行的子列表或表格
+  const afterStart = match.index + match[0].length;
+  const restLines = content.slice(afterStart).split('\n').slice(1);
+  const collected: string[] = [];
+  for (const line of restLines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (collected.length > 0) break;
+      continue;
+    }
+    // 遇到下一个顶层标题或下一个已知字段标题时停止
+    if (/^#{1,6}\s/.test(trimmed)) break;
+    if (ACHIEVEMENT_FIELD_PATTERN.test(line)) break;
+    collected.push(trimmed);
+    if (collected.join(' ').length >= 80) break;
+  }
+  return collected.join(' ').trim();
+}
+
+/**
+ * 判断模型在工具执行后给出的最终回复是否有效闭环
+ * 核心原则：尊重模型自由组织的清晰报告（含加粗、多行列表、表格），
+ * 仅拦截空回复、明显被截断、纯占位符或过短的敷衍过渡句，绝不误杀正常总结。
  */
 export function isConclusionComplete(
   content: string,
@@ -133,15 +165,43 @@ export function isConclusionComplete(
   if (!content) return false;
   if (options.truncated) return false;
 
-  if (!new RegExp(CONCLUSION_HEADING_SOURCE, 'm').test(content)) return false;
+  const cleaned = content
+    .replace(/^>\s*模型输出.*$/gm, '')
+    .trim();
+  if (!cleaned) return false;
 
-  const achievement = content.match(new RegExp(ACHIEVEMENT_FIELD_PATTERN.source, 'm'))?.[1] || '';
-  if (isPlaceholderValue(achievement)) return false;
+  // 若包含未填完的模板占位符（如 "[已完成 / 异常]"），判定未闭环
+  if (/\[已完成\s*\/\s*异常\]/.test(cleaned)) return false;
 
-  const verification =
-    content.match(new RegExp(VERIFICATION_FIELD_PATTERN.source, 'm'))?.[1] || '';
-  if (isPlaceholderValue(verification)) return false;
-  if (verification.trim().length < CONCLUSION_DETAIL_MIN_CHARS) return false;
+  // 路径 1：按结构化结论格式校验（兼容加粗与多行列表）
+  if (new RegExp(CONCLUSION_HEADING_SOURCE, 'm').test(cleaned)) {
+    const achievement = extractFieldBody(cleaned, ACHIEVEMENT_FIELD_PATTERN);
+    const verification = extractFieldBody(cleaned, VERIFICATION_FIELD_PATTERN);
+    if (achievement && !isPlaceholderValue(achievement) && verification.length >= 10) {
+      return true;
+    }
+    // 即使字段名略有变化，只要该标题下有足够实质内容也视为完整
+    const lastIdx = findLastConclusionIndex(cleaned);
+    const sectionBody = lastIdx >= 0 ? cleaned.slice(lastIdx) : cleaned;
+    const bodyLines = sectionBody
+      .split('\n')
+      .slice(1)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (bodyLines.join('').length >= SUBSTANTIVE_CONCLUSION_MIN_CHARS) {
+      return true;
+    }
+    return false;
+  }
+
+  // 路径 2：模型使用自由 Markdown（表格、分节分析、清晰结论）而非固定模板标题
+  // 只要有效正文长度充足且不是一句“正在排查/让我看看”之类的过程预告，即认可为完整回复
+  const plainLen = cleaned.replace(/[\s#*_`>-]/g, '').length;
+  if (plainLen < SUBSTANTIVE_CONCLUSION_MIN_CHARS) return false;
+
+  const isOnlyTransitionPhrase =
+    /^(?:好的|明白|收到|正在|我来|接下来|下面|让我)[^。！？\n]{0,30}[。：:….]*$/.test(cleaned);
+  if (isOnlyTransitionPhrase) return false;
 
   return true;
 }
@@ -156,20 +216,21 @@ function findLastConclusionIndex(text: string): number {
   return lastIndex;
 }
 
-/** 截掉结尾那段不完整的结论，避免补充结论时残留半句 */
+/** 仅在尾部确实是残缺模板片段时裁剪，不删除模型已产出的有效分析 */
 export function dropIncompleteConclusion(content: string): string {
   const text = (content || '').trim();
   if (!text) return '';
 
   const lastIndex = findLastConclusionIndex(text);
   if (lastIndex < 0) return text;
-  return text.slice(0, lastIndex).trim();
+  const tail = text.slice(lastIndex);
+  // 只有当尾部结论本身长度很短或含占位符时才截掉
+  if (tail.length < 120 || /\[已完成\s*\/\s*异常\]/.test(tail)) {
+    return text.slice(0, lastIndex).trim();
+  }
+  return text;
 }
 
-/**
- * 判断正文结尾那段结论是否闭环
- * 多轮对话中历史轮次可能已有完整结论，因此必须只看最后一段
- */
 export function isTrailingConclusionComplete(
   content: string,
   options: ConclusionCheckOptions = {}
@@ -184,8 +245,7 @@ export function isTrailingConclusionComplete(
 }
 
 /**
- * 用补充结论替换结尾的不完整结论；结尾已闭环时不重复追加
- * 保证界面中始终只有一段有效结论
+ * 合并补充结论：若原有正文已有有效分析则保留并追加，仅替换明显残缺的半截结论
  */
 export function upsertConclusion(
   content: string,
@@ -202,7 +262,6 @@ export function upsertConclusion(
   return base ? `${base}\n\n${report}` : report;
 }
 
-/** 在正文末尾安全追加兜底结论，结尾已闭环时不重复追加 */
 export function appendConclusionSafely(
   content: string,
   conclusion: string,
@@ -213,9 +272,6 @@ export function appendConclusionSafely(
 
 const ABORT_MARKERS = ['[任务已手动中止]', '[工作区任务已手动中止]'];
 
-/**
- * 清洗历史消息正文，剔除中止标记等运行时痕迹
- */
 export function sanitizeHistoryContent(content?: string): string {
   if (!content) return '';
   let text = content;
@@ -225,10 +281,6 @@ export function sanitizeHistoryContent(content?: string): string {
   return text.trim();
 }
 
-/**
- * 生成进入上下文的工具执行结果
- * 明确区分拒绝、无输出与真实输出，避免历史重放时语义漂移
- */
 export function buildHistoryToolResult(toolCall: ToolCallItem): string {
   if (toolCall.status === 'rejected') return '用户拒绝执行';
   const result = (toolCall.result || '').trim();
@@ -238,14 +290,18 @@ export function buildHistoryToolResult(toolCall: ToolCallItem): string {
   return result;
 }
 
+export interface ThinkParseState {
+  inThink: boolean;
+  pending: string;
+}
+
 /**
  * 解析正文中的 <think> 标签，处理标签被拆分到多个流式片段的情况
- * 返回值中 thinking 为思考内容，content 为正文，pending 为尚未闭合的标签残片
  */
 export function parseThinkTag(
   raw: string,
-  state: { inThink: boolean; pending: string }
-): { thinking: string; content: string; state: { inThink: boolean; pending: string } } {
+  state: ThinkParseState
+): { thinking: string; content: string; state: ThinkParseState } {
   let text = state.pending + raw;
   let inThink = state.inThink;
   let thinking = '';
@@ -255,7 +311,6 @@ export function parseThinkTag(
     if (inThink) {
       const close = text.indexOf('</think>');
       if (close === -1) {
-        // 保留可能为跨片段标签前缀的尾部
         const keep = longestTagSuffix(text, '</think>');
         thinking += text.slice(0, text.length - keep.length);
         return { thinking, content, state: { inThink, pending: keep } };
@@ -279,7 +334,15 @@ export function parseThinkTag(
   return { thinking, content, state: { inThink, pending: '' } };
 }
 
-/** 求文本尾部与目标标签前缀重合的最长长度 */
+/** 流结束时刷出未闭合的标签残片，避免丢字 */
+export function flushThinkTag(state: ThinkParseState): { thinking: string; content: string } {
+  if (!state.pending) return { thinking: '', content: '' };
+  if (state.inThink) {
+    return { thinking: state.pending, content: '' };
+  }
+  return { thinking: '', content: state.pending };
+}
+
 function longestTagSuffix(text: string, tag: string): string {
   const max = Math.min(text.length, tag.length - 1);
   for (let len = max; len > 0; len--) {
@@ -291,24 +354,54 @@ function longestTagSuffix(text: string, tag: string): string {
 }
 
 /**
- * 构造用于请求最终结论的消息序列
- * 丢弃 tool_calls 与 tool 消息，避免在未声明 tools 的请求中携带工具调用历史
- * 模型只会看到其自身的文本与用户的结论要求，兼容严格校验工具定义的实现
+ * 构造用于请求最终结论的消息序列：
+ * 1. 移除 tool_calls 与 tool 消息，兼容不声明 tools 的总结请求
+ * 2. 严格保证 user / assistant 角色交替，避免 DeepSeek-Reasoner / Qwen / vLLM 因连续两条 user 报 400 或空响应
  */
-export function buildConclusionMessages(conversation: any[], conclusionPrompt: string): any[] {
+export function buildConclusionMessages(
+  conversation: any[],
+  conclusionPrompt: string
+): any[] {
   const messages: any[] = [];
 
   for (const msg of conversation) {
     if (!msg || typeof msg !== 'object') continue;
     if (msg.role === 'tool') continue;
     if (msg.role === 'assistant') {
-      // 保留有正文的 assistant 文本，丢弃纯工具调用占位
       if (typeof msg.content === 'string' && msg.content.trim()) {
-        messages.push({ role: 'assistant', content: msg.content });
+        if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+          messages[messages.length - 1] = {
+            role: 'assistant',
+            content: `${messages[messages.length - 1].content}\n\n${msg.content.trim()}`,
+          };
+        } else {
+          messages.push({ role: 'assistant', content: msg.content.trim() });
+        }
+      }
+      continue;
+    }
+    if (msg.role === 'user') {
+      const text = typeof msg.content === 'string' ? msg.content.trim() : '';
+      if (!text) continue;
+      if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+        messages[messages.length - 1] = {
+          role: 'user',
+          content: `${messages[messages.length - 1].content}\n\n${text}`,
+        };
+      } else {
+        messages.push({ role: 'user', content: text });
       }
       continue;
     }
     messages.push(msg);
+  }
+
+  // 若末尾仍是 user，先插入一条简洁的 assistant 过渡消息以保证角色严格交替
+  if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+    messages.push({
+      role: 'assistant',
+      content: '已完成本轮工具调用，正在依据执行结果汇总结论。',
+    });
   }
 
   messages.push({ role: 'user', content: conclusionPrompt });
@@ -316,7 +409,7 @@ export function buildConclusionMessages(conversation: any[], conclusionPrompt: s
 }
 
 /**
- * 请求模型输出最终执行结论的提示词（会话级与工作区级共用同一下沉实现）
+ * 请求模型输出最终执行结论的提示词（会话级与工作区级共用）
  */
 export function buildConclusionPrompt(
   scope: 'session' | 'workspace',
@@ -324,53 +417,50 @@ export function buildConclusionPrompt(
 ): string {
   const digest = buildToolExecutionDigest(toolCalls);
 
-  const common = `所有执行步骤与工具调用已结束。请依据下方真实执行状态，输出结构化最终结论：
-1. 先给一句概述（整体目标是否达成、涉及对象与最终状态），再给关键事实。
-2. 以整体目标是否达成、各节点最终验证状态为唯一评判依据。
-3. 前置探测、分支判断、状态查询类命令返回的非零退出码属于正常判断结果，不应判定为失败。
-4. 前期出现的报错或未就绪状态，只要已被后续步骤成功修复、启动、配置或同步，一律判定为已完成。
-5. 仅当最终状态确实异常时才判定为异常，避免使用"未完成"等模糊表述。
-6. 「状态与验证」必须引用真实执行数据，并非空泛描述：服务名、进程 PID、运行时长、内存占用、监听端口、版本号或退出码等，至少给出一项；数据来自下方执行状态。
-7. 所有字段必须填写完整，无变更时写"无"；不得以半句或残句结尾。
+  const common = `所有工具调用已结束。请依据下方真实执行输出，为用户提供一份清晰、完整、可直接阅读的最终总结：
+1. 先用 1-2 句话直接给出最终结论（目标是否达成、当前状态或排查根因）。
+2. 列出关键验证数据与事实（真实引用的指标、进程/PID、端口、配置路径、日志片段、退出码等），可使用无序列表或 Markdown 表格清晰呈现。
+3. 如有配置修改、文件写入或服务变更，明确列出变更项与路径；无变更则简要说明。
+4. 如有异常或待处理风险，指明具体环节与下一步建议。
+5. 以最终状态判定成败：前置探测命令（grep/test/pidof/which/systemctl is-active 等）的非零退出码属于正常判断，前期已被修复的报错不视为失败。
+6. 严禁虚构未在下方输出中出现的数据，严禁使用 Emoji。
 
-真实执行状态：
+本轮工具真实执行记录：
 ${digest}`;
 
   if (scope === 'workspace') {
     return `${common}
 
-请按以下格式输出：
+建议输出结构：
 ### 最终执行结论
-- 总体达成情况: [已完成 / 异常] + 一句话概述
-- 节点状态与验证: [各主机真实数据：服务名/进程/端口/状态，逐节点列出]
-- 重点变更与同步: [跨机同步、脚本下发或配置变更；无则写"无"]`;
+- **总体达成情况**: 已完成 / 异常 + 核心概述
+- **各节点状态与关键数据**: 逐主机列出真实指标、端口、服务状态或对比差异
+- **变更与同步清单**: 涉及的脚本下发、配置修改或跨机同步（无则写无）`;
   }
 
   return `${common}
 
-请按以下格式输出：
+建议输出结构：
 ### 执行结论
-- 目标达成情况: [已完成 / 异常] + 一句话概述
-- 关键状态与验证: [真实数据：服务名、进程 PID、运行时长、内存占用、监听端口或退出码等]
-- 重点变更说明: [配置修改或脚本部署；无则写"无"]`;
+- **目标达成情况**: 已完成 / 异常 + 核心概述
+- **关键状态与验证**: 引用本轮真实数据（服务状态、端口、进程、资源占用、关键日志或配置项等）
+- **变更与建议**: 本轮修改内容或后续建议（无则写无）`;
 }
 
 /**
- * 模型未产出结论文本时，基于真实执行状态生成确定性结论
- * 数据全部来源于真实工具调用记录，不做任何虚构
+ * 仅在模型完全无法产出有效回复（如网络中断/多次空响应）时的事实兜底汇总
+ * 附带末尾关键步骤的真实输出摘录，避免空洞无信息
  */
 export function buildDeterministicConclusion(toolCalls: ToolCallItem[]): string {
   const success = toolCalls.filter((t) => t.status === 'success').length;
   const rejected = toolCalls.filter((t) => t.status === 'rejected').length;
 
-  // 仅统计执行末尾仍未被后续成功步骤覆盖的失败，避免前置探测失败被误判为最终异常
   const unresolvedFailures = toolCalls.filter(
     (toolCall, index) =>
       toolCall.status === 'failed' &&
       !toolCalls.slice(index + 1).some((later) => later.status === 'success')
   );
 
-  // 判定顺序：存在未闭环失败 → 异常；有成功步骤 → 已完成；全部被取消 → 已取消；否则未执行
   let verdict: string;
   if (unresolvedFailures.length > 0) {
     verdict = '异常';
@@ -382,24 +472,34 @@ export function buildDeterministicConclusion(toolCalls: ToolCallItem[]): string 
     verdict = '未执行任何操作';
   }
 
-  const executedSummary = toolCalls
-    .filter((t) => t.status === 'success')
-    .map((t) => describeToolTarget(t) || t.name)
-    .filter(Boolean)
-    .slice(0, 5)
-    .join('; ');
-
   const lines = [
     '### 执行结论',
-    `- 目标达成情况: ${verdict}，本轮共执行 ${toolCalls.length} 个步骤。`,
-    `- 关键状态与验证: 共 ${toolCalls.length} 次调用，成功 ${success}，已取消 ${rejected}，未闭环失败 ${unresolvedFailures.length}${executedSummary ? `；已成功执行: ${executedSummary}` : ''}`,
+    `- **目标达成情况**: ${verdict}（本轮共 ${toolCalls.length} 步：成功 ${success}，取消 ${rejected}，未闭环失败 ${unresolvedFailures.length}）。`,
   ];
 
-  if (unresolvedFailures.length > 0) {
-    const failedItems = unresolvedFailures
-      .map((t) => `${t.hostName ? `[${t.hostName}] ` : ''}${t.name} ${describeToolTarget(t)}`.trim())
-      .slice(0, 5);
-    lines.push(`- 失败项: ${failedItems.join('; ')}`);
+  // 提取最近最多 3 条带真实输出的执行结果作为事实证据
+  const recentWithOutput = toolCalls
+    .filter((t) => t.status === 'success' || t.status === 'failed')
+    .slice(-3);
+
+  if (recentWithOutput.length > 0) {
+    lines.push('- **关键执行输出摘录**:');
+    for (const tc of recentWithOutput) {
+      const host = tc.hostName ? `[${tc.hostName}] ` : '';
+      const target = describeToolTarget(tc) || tc.name;
+      const snippet = stripAnsi(tc.result || '')
+        .replace(/\r\n?/g, '\n')
+        .trim()
+        .split('\n')
+        .slice(0, 6)
+        .join('\n');
+      lines.push(`  - \`${host}${target}\` (${STATUS_LABELS[tc.status]})`);
+      if (snippet) {
+        lines.push('```text');
+        lines.push(snippet.slice(0, 600));
+        lines.push('```');
+      }
+    }
   }
 
   const changes = toolCalls
@@ -407,8 +507,7 @@ export function buildDeterministicConclusion(toolCalls: ToolCallItem[]): string 
     .map((t) => `${t.hostName ? `[${t.hostName}] ` : ''}${describeToolTarget(t)}`.trim())
     .filter(Boolean)
     .slice(0, 10);
-  lines.push(`- 重点变更说明: ${changes.length > 0 ? changes.join('; ') : '无'}`);
-
-  lines.push('- 说明: 以上结论依据真实工具执行记录汇总，未做任何推测补充');
+  lines.push(`- **重点变更说明**: ${changes.length > 0 ? changes.join('; ') : '无'}`);
+  lines.push('> 注：模型未返回总结正文，以上为基于真实工具输出自动整理的事实摘录。');
   return lines.join('\n');
 }

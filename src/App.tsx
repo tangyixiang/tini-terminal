@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { BUILTIN_THEMES, getPrimaryButtonStyle } from './types/theme';
 import { clampAiPanelWidth, clampSidebarWidth } from './lib/layout';
 import { useViewportWidth } from './lib/useViewportWidth';
+import { focusManager } from './core/focus/FocusManager';
 import { Terminal, Plus } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -26,6 +27,9 @@ export const App: React.FC = () => {
     primaryMode,
     isAiPanelOpen,
     isServerSidebarOpen,
+    isServerModalOpen,
+    isSettingsModalOpen,
+    isSftpDrawerOpen,
     sidebarWidth,
     setSidebarWidth,
     aiPanelWidth,
@@ -61,6 +65,27 @@ export const App: React.FC = () => {
       invoke('set_window_theme', { isDark: currentTheme.isDark }).catch(() => {});
     }
   }, [themeId, currentTheme.isDark]);
+
+  // 统一由 FocusManager 仲裁模态弹窗、SFTP 抽屉与工作区视图的焦点域，关闭后自动归还终端焦点
+  useEffect(() => {
+    if (isServerModalOpen) focusManager.pushScope('server-modal', 'modal');
+    else focusManager.popScope('server-modal');
+  }, [isServerModalOpen]);
+
+  useEffect(() => {
+    if (isSettingsModalOpen) focusManager.pushScope('settings-modal', 'modal');
+    else focusManager.popScope('settings-modal');
+  }, [isSettingsModalOpen]);
+
+  useEffect(() => {
+    if (isSftpDrawerOpen) focusManager.pushScope('sftp-drawer', 'sftp');
+    else focusManager.popScope('sftp-drawer');
+  }, [isSftpDrawerOpen]);
+
+  useEffect(() => {
+    if (primaryMode === 'workspace') focusManager.pushScope('workspace-mode', 'ai');
+    else focusManager.popScope('workspace-mode');
+  }, [primaryMode]);
 
   const [isResizingLeft, setIsResizingLeft] = useState(false);
   const [isResizingRight, setIsResizingRight] = useState(false);
@@ -146,95 +171,96 @@ export const App: React.FC = () => {
           />
         )}
 
-        {/* 主画布视区：根据模式渲染 Workspace Agent 画布或常规 Terminal 工作区 */}
-        {primaryMode === 'workspace' ? (
-          <WorkspaceAgentView />
-        ) : (
-          <>
-            {/* 中间：终端工作区 */}
-            <section
-              className="flex-1 flex flex-col overflow-hidden relative transition-colors duration-200"
-              style={{ backgroundColor: currentTheme.ui.terminalBg }}
-            >
-              {tabs.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-                  <Terminal
-                    className="w-12 h-12"
+        {/* 主画布视区：Workspace 模式与 Terminal 工作区通过 CSS 切换可见性，避免卸载活跃终端实例 */}
+        {primaryMode === 'workspace' && <WorkspaceAgentView />}
+
+        <div className={`flex-1 flex overflow-hidden min-w-0 ${primaryMode === 'workspace' ? 'hidden' : ''}`}>
+          {/* 中间：终端工作区 */}
+          <section
+            className="flex-1 flex flex-col overflow-hidden relative transition-colors duration-200"
+            style={{ backgroundColor: currentTheme.ui.terminalBg }}
+          >
+            {tabs.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center space-y-4">
+                <Terminal
+                  className="w-12 h-12"
+                  style={{ color: currentTheme.ui.textMuted }}
+                />
+                <div className="text-center">
+                  <p
+                    className="text-sm font-medium"
+                    style={{ color: currentTheme.ui.text }}
+                  >
+                    暂无打开的终端标签
+                  </p>
+                  <p
+                    className="text-xs mt-1"
                     style={{ color: currentTheme.ui.textMuted }}
-                  />
-                  <div className="text-center">
-                    <p
-                      className="text-sm font-medium"
-                      style={{ color: currentTheme.ui.text }}
-                    >
-                      暂无打开的终端标签
-                    </p>
-                    <p
-                      className="text-xs mt-1"
-                      style={{ color: currentTheme.ui.textMuted }}
-                    >
-                      选择左侧主机连接，或快速启动本地终端
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => openLocalTab()}
-                      className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 cursor-pointer font-medium transition-colors"
-                      style={{
-                        backgroundColor: currentTheme.ui.hoverBg,
-                        color: currentTheme.ui.text,
-                      }}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      新建本地终端
-                    </button>
-                    <button
-                      onClick={() => toggleServerModal(true)}
-                      className="px-3 py-1.5 rounded text-xs cursor-pointer font-semibold transition-opacity hover:opacity-90"
-                      style={getPrimaryButtonStyle(currentTheme)}
-                    >
-                      添加远程主机
-                    </button>
-                  </div>
+                  >
+                    选择左侧主机连接，或快速启动本地终端
+                  </p>
                 </div>
-              ) : (
-                <div className="flex-1 flex flex-col h-full overflow-hidden">
-                  {/* 二级紧凑标签工作条 */}
-                  <SecondaryTabBar />
-
-                  {/* 终端会话视图容器 */}
-                  <div className="flex-1 relative overflow-hidden">
-                    {tabs.map((tab) => (
-                      <div
-                        key={tab.id}
-                        className={`absolute inset-0 ${
-                          tab.id === activeTabId
-                            ? 'visible z-10'
-                            : 'invisible pointer-events-none z-0'
-                        }`}
-                      >
-                        <XTerminal tab={tab} isActive={tab.id === activeTabId} />
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => openLocalTab()}
+                    className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 cursor-pointer font-medium transition-colors"
+                    style={{
+                      backgroundColor: currentTheme.ui.hoverBg,
+                      color: currentTheme.ui.text,
+                    }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    新建本地终端
+                  </button>
+                  <button
+                    onClick={() => toggleServerModal(true)}
+                    className="px-3 py-1.5 rounded text-xs cursor-pointer font-semibold transition-opacity hover:opacity-90"
+                    style={getPrimaryButtonStyle(currentTheme)}
+                  >
+                    添加远程主机
+                  </button>
                 </div>
-              )}
-            </section>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col h-full overflow-hidden">
+                {/* 二级紧凑标签工作条 */}
+                <SecondaryTabBar />
 
-            {/* 右侧拖拽调整宽度手柄 */}
-            {isAiPanelOpen && (
-              <div
-                className={`resize-handle-x ${isResizingRight ? 'resizing' : ''}`}
-                onMouseDown={handleRightResize}
-                onDoubleClick={handleRightDoubleClick}
-                title="按住左右拖拽调整宽度，双击快速切换宽屏/紧凑模式"
-              />
+                {/* 终端会话视图容器 */}
+                <div className="flex-1 relative overflow-hidden">
+                  {tabs.map((tab) => (
+                    <div
+                      key={tab.id}
+                      className={`absolute inset-0 ${
+                        tab.id === activeTabId
+                          ? 'visible z-10'
+                          : 'invisible pointer-events-none z-0'
+                      }`}
+                    >
+                      <XTerminal
+                        tab={tab}
+                        isActive={primaryMode !== 'workspace' && tab.id === activeTabId}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
+          </section>
 
-            {/* 右侧：AI 智能体工作面板 */}
-            {isAiPanelOpen && <AgentPanel />}
-          </>
-        )}
+          {/* 右侧拖拽调整宽度手柄 */}
+          {isAiPanelOpen && (
+            <div
+              className={`resize-handle-x ${isResizingRight ? 'resizing' : ''}`}
+              onMouseDown={handleRightResize}
+              onDoubleClick={handleRightDoubleClick}
+              title="按住左右拖拽调整宽度，双击快速切换宽屏/紧凑模式"
+            />
+          )}
+
+          {/* 右侧：AI 智能体工作面板 */}
+          {isAiPanelOpen && <AgentPanel />}
+        </div>
 
         {/* 全局拖拽事件捕获遮罩层，杜绝终端捕获或文字选中干扰 */}
         {(isResizingLeft || isResizingRight) && (

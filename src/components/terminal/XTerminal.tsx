@@ -1,13 +1,14 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { BUILTIN_THEMES } from '../../types/theme';
+import { terminalRuntimeManager } from '../../core/terminal/TerminalRuntimeManager';
 import type { TerminalTab } from '../../types';
-import { TerminalView } from './TerminalView';
-import { TerminalSession } from './TerminalSession';
-import { TerminalInput } from './TerminalInput';
-import { TerminalResize } from './TerminalResize';
-import { TerminalFocus } from './TerminalFocus';
+import { TerminalCanvas } from './TerminalCanvas';
+import { TerminalSearchBar } from './TerminalSearchBar';
+import { TerminalContextMenu, type ContextMenuState } from './TerminalContextMenu';
+import { PasteConfirmModal } from './PasteConfirmModal';
+import { DisconnectBanner } from './DisconnectBanner';
 
 interface XTerminalProps {
   tab: TerminalTab;
@@ -15,261 +16,221 @@ interface XTerminalProps {
 }
 
 export const XTerminal: React.FC<XTerminalProps> = ({ tab, isActive = true }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<TerminalView | null>(null);
-  const sessionRef = useRef<TerminalSession | null>(null);
-  const inputRef = useRef<TerminalInput | null>(null);
-  const resizeRef = useRef<TerminalResize | null>(null);
-  const focusRef = useRef<TerminalFocus | null>(null);
-
-  const isActiveRef = useRef(isActive);
-  isActiveRef.current = isActive;
-
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
+  const [hasConnectedOnce, setHasConnectedOnce] = useState(
+    () => terminalRuntimeManager.getController(tab.sessionId)?.hasConnectedOnce() ?? false
+  );
+  const [inputErrorMsg, setInputErrorMsg] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [pendingPasteText, setPendingPasteText] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    selection: '',
+  });
 
   const setTabConnected = useTerminalStore((state) => state.setTabConnected);
+  const setTabLatency = useTerminalStore((state) => state.setTabLatency);
   const themeId = useSettingsStore((state) => state.themeId);
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const setTerminalFontSize = useSettingsStore((state) => state.setTerminalFontSize);
   const isSftpDrawerOpen = useSettingsStore((state) => state.isSftpDrawerOpen);
+  const toggleSftpDrawer = useSettingsStore((state) => state.toggleSftpDrawer);
+  const toggleAiPanel = useSettingsStore((state) => state.toggleAiPanel);
   const currentTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
 
-  // 1. 初始化终端引擎、会话生命周期、输入与焦点控制
-  useEffect(() => {
-    if (!containerRef.current) return;
+  const getController = useCallback(
+    () => terminalRuntimeManager.getController(tab.sessionId),
+    [tab.sessionId]
+  );
 
-    const initialTheme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
-
-    const view = new TerminalView({
-      fontSize: terminalFontSize || 14,
-      theme: initialTheme.terminal,
-    });
-    view.open(containerRef.current);
-    viewRef.current = view;
-
-    const session = new TerminalSession({
-      tab: tabRef.current,
-      onOutput: (data) => {
-        view.write(data);
+  const callbacks = useMemo(
+    () => ({
+      onOpenSearch: () => setSearchOpen(true),
+      onMultiLinePaste: (text: string) => setPendingPasteText(text),
+      onZoomFont: (delta: number) => {
+        const cur = useSettingsStore.getState().terminalFontSize || 14;
+        setTerminalFontSize(cur + delta);
       },
-      onConnectedChange: (connected) => {
-        setTabConnected(tabRef.current.id, connected);
+      onConnectedChange: (tabId: string, connected: boolean) => {
+        if (connected) setInputErrorMsg(null);
+        setTabConnected(tabId, connected);
       },
-    });
-    sessionRef.current = session;
+      onLatencyChange: (tabId: string, latencyMs: number | null) => {
+        setTabLatency(tabId, latencyMs);
+      },
+      onConnectedOnce: () => setHasConnectedOnce(true),
+      onInputError: (err: Error) => {
+        setInputErrorMsg(err.message || '终端输入通道异常');
+      },
+    }),
+    [setTabConnected, setTabLatency, setTerminalFontSize]
+  );
 
-    const input = new TerminalInput({
-      view,
-      session,
-      getIsActive: () => isActiveRef.current,
-    });
-    inputRef.current = input;
+  // 点击外部关闭右键菜单
+  useEffect(() => {
+    if (!contextMenu.visible) return;
+    const close = () => setContextMenu((prev) => ({ ...prev, visible: false }));
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [contextMenu.visible]);
 
-    const resize = new TerminalResize({
-      container: containerRef.current,
-      view,
-      session,
-      getIsActive: () => isActiveRef.current,
-    });
-    resizeRef.current = resize;
-
-    const focus = new TerminalFocus({
-      tabId: tab.id,
-      view,
-      container: containerRef.current,
-      getIsActive: () => isActiveRef.current,
-    });
-    focusRef.current = focus;
-
-    // 初始布局与连接建立：先等容器量出有效尺寸再创建 PTY，
-    // 避免以默认 80x24 建连后立刻 resize 导致首屏提示符重排错位。
-    let isCancelled = false;
-    const bootstrap = (attempt: number) => {
-      if (isCancelled) return;
-      const initialSize = resize.sync(true);
-      if (initialSize) {
-        // 行高归整会改变单元格高度，需重新取一次可用行列后建连
-        view.applyIntegerLineHeight();
-        const size = resize.sync(true) ?? initialSize;
-        session.connect(size.cols, size.rows).then(() => {
-          if (isCancelled) return;
-          // 建连耗时期间用户可能已拖动分栏，连接成功后再校正一次远端 PTY 尺寸
-          resize.resetAppliedSize();
-          resize.sync(true);
-          view.refresh();
-        });
-        return;
-      }
-      if (attempt < 24) {
-        requestAnimationFrame(() => bootstrap(attempt + 1));
-        return;
-      }
-      // 兜底：容器长时间无有效尺寸时按当前视口尺寸建连
-      session.connect(view.cols, view.rows);
+  // 二级标签栏指令监听
+  useEffect(() => {
+    const matchTab = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId?: string }>).detail;
+      return !detail?.tabId || detail.tabId === tab.id;
     };
-    bootstrap(0);
 
-    if (isActiveRef.current) {
-      focus.focus();
-      requestAnimationFrame(() => focus.focus());
-      setTimeout(() => focus.focus(), 80);
-      setTimeout(() => focus.focus(), 200);
-    }
-
-    const layoutTimers = [80, 200].map((delay) =>
-      setTimeout(() => {
-        resize.sync();
-      }, delay)
-    );
-
-    return () => {
-      isCancelled = true;
-      layoutTimers.forEach(clearTimeout);
-      focus.dispose();
-      resize.dispose();
-      input.dispose();
-      session.dispose();
-      view.dispose();
-
-      focusRef.current = null;
-      resizeRef.current = null;
-      inputRef.current = null;
-      sessionRef.current = null;
-      viewRef.current = null;
-    };
-  }, [tab.id]);
-
-  // 2. 保持 Tab 状态与控制器同步
-  useEffect(() => {
-    sessionRef.current?.updateTab(tab);
-    focusRef.current?.updateTabId(tab.id);
-  }, [tab]);
-
-  // 3. 响应标签激活状态切换：自适应尺寸并聚焦
-  useEffect(() => {
-    if (isActive) {
-      resizeRef.current?.sync();
-      focusRef.current?.onActiveChange(true);
-    } else {
-      focusRef.current?.onActiveChange(false);
-    }
-  }, [isActive]);
-
-  // 4. 响应主题切换
-  useEffect(() => {
-    const theme = BUILTIN_THEMES[themeId] || BUILTIN_THEMES.aliyun;
-    viewRef.current?.setTheme(theme.terminal);
-  }, [themeId]);
-
-  // 5. 响应字体大小变更
-  useEffect(() => {
-    if (terminalFontSize && viewRef.current) {
-      viewRef.current.setFontSize(terminalFontSize);
-      resizeRef.current?.sync(true);
-    }
-  }, [terminalFontSize]);
-
-  // 6. 响应 SFTP 侧抽屉切换
-  useEffect(() => {
-    if (isActive) {
-      resizeRef.current?.sync();
-      const timer = setTimeout(() => {
-        resizeRef.current?.sync();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [isSftpDrawerOpen, isActive]);
-
-  // 7. 响应窗口全局尺寸变动
-  useEffect(() => {
-    const handleWinResize = () => {
-      if (isActiveRef.current) {
-        resizeRef.current?.sync();
-      }
-    };
-    window.addEventListener('resize', handleWinResize);
-    return () => window.removeEventListener('resize', handleWinResize);
-  }, []);
-
-  // 8. 响应字体加载完成：字体度量变化会改变行高，需要重新归整并重排
-  useEffect(() => {
-    if (document.fonts?.ready) {
-      document.fonts.ready.then(() => {
-        if (!viewRef.current) return;
-        viewRef.current.applyIntegerLineHeight();
-        resizeRef.current?.sync(true);
-        viewRef.current.refresh();
-      });
-    }
-  }, []);
-
-  // 9. 响应来自二级标签栏的清屏、全选复制与重试指令
-  useEffect(() => {
     const onClear = (e: Event) => {
-      const customEvent = e as CustomEvent<{ tabId?: string }>;
-      if (!customEvent.detail?.tabId || customEvent.detail.tabId === tab.id) {
-        viewRef.current?.clear();
-      }
+      if (matchTab(e)) getController()?.clear();
     };
-
     const onCopyAll = (e: Event) => {
-      const customEvent = e as CustomEvent<{ tabId?: string }>;
-      if (!customEvent.detail?.tabId || customEvent.detail.tabId === tab.id) {
-        if (viewRef.current) {
-          viewRef.current.selectAll();
-          const text = viewRef.current.getSelection();
-          if (text) {
-            navigator.clipboard.writeText(text).catch(() => {});
-            viewRef.current.clearSelection();
-          }
-        }
+      if (matchTab(e)) getController()?.copyAll();
+    };
+    const onRetry = async (e: Event) => {
+      if (matchTab(e)) {
+        setInputErrorMsg(null);
+        await getController()?.retry();
       }
     };
-
-    const onRetry = async (e: Event) => {
-      const customEvent = e as CustomEvent<{ tabId?: string }>;
-      if (!customEvent.detail?.tabId || customEvent.detail.tabId === tab.id) {
-        if (viewRef.current && sessionRef.current) {
-          viewRef.current.clear();
-          await sessionRef.current.retry(viewRef.current.cols, viewRef.current.rows);
-        }
-      }
+    const onOpenSearch = (e: Event) => {
+      if (matchTab(e)) setSearchOpen(true);
     };
 
     window.addEventListener('terminal:clear', onClear);
     window.addEventListener('terminal:copy-all', onCopyAll);
     window.addEventListener('terminal:retry', onRetry);
+    window.addEventListener('terminal:search', onOpenSearch);
 
     return () => {
       window.removeEventListener('terminal:clear', onClear);
       window.removeEventListener('terminal:copy-all', onCopyAll);
       window.removeEventListener('terminal:retry', onRetry);
+      window.removeEventListener('terminal:search', onOpenSearch);
     };
-  }, [tab.id]);
+  }, [tab.id, getController]);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const selection = getController()?.getSelection() || '';
+    setContextMenu({
+      visible: true,
+      x: Math.min(e.clientX, window.innerWidth - 200),
+      y: Math.min(e.clientY, window.innerHeight - 220),
+      selection,
+    });
+  };
+
+  const handleReconnect = async () => {
+    setInputErrorMsg(null);
+    await getController()?.retry();
+  };
+
+  const handleAskAi = () => {
+    const snippet = contextMenu.selection.trim() || getController()?.getRecentBufferText(30) || '';
+    if (!snippet) return;
+    toggleAiPanel(true);
+    const prompt = `请分析以下终端输出并给出排查结论或修复建议：\n\`\`\`text\n${snippet.slice(0, 3000)}\n\`\`\``;
+    setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent('agent:ask-with-context', { detail: { prompt, autoSend: false } })
+      );
+    }, 60);
+  };
+
+  const showDisconnectBanner =
+    (tab.isSsh && hasConnectedOnce && !tab.connected) || Boolean(inputErrorMsg);
 
   return (
     <div
       className="flex-1 w-full h-full overflow-hidden transition-colors duration-200 cursor-text relative"
       style={{ backgroundColor: currentTheme.ui.terminalBg }}
-      onMouseDown={() => {
-        focusRef.current?.focus();
-      }}
-      onClick={() => {
-        focusRef.current?.focus();
-      }}
+      onContextMenu={handleContextMenu}
     >
-      {/*
-        内边距必须放在外层包裹容器上：FitAddon 以 .xterm 的父元素 border-box 计算行列，
-        但不会扣除父元素自身的 padding，若把 p-2 放在测量容器上会多算出约 2 列，
-        远端 shell 据此换行后提示符会覆盖上一行文字。
-      */}
-      <div className="w-full h-full p-2 overflow-hidden">
-        <div
-          ref={containerRef}
-          className="w-full h-full overflow-hidden"
-          style={{ backgroundColor: currentTheme.ui.terminalBg }}
-        />
-      </div>
+      <DisconnectBanner
+        visible={showDisconnectBanner}
+        message={inputErrorMsg || 'SSH 会话已断开'}
+        theme={currentTheme}
+        onReconnect={handleReconnect}
+      />
+
+      <TerminalSearchBar
+        tabId={tab.id}
+        open={searchOpen}
+        theme={currentTheme}
+        getController={getController}
+        onClose={() => setSearchOpen(false)}
+      />
+
+      <TerminalContextMenu
+        menu={contextMenu}
+        isSsh={tab.isSsh}
+        theme={currentTheme}
+        onCopy={() => {
+          if (contextMenu.selection) {
+            navigator.clipboard.writeText(contextMenu.selection).catch(() => {});
+            getController()?.clearSelection();
+          }
+          setContextMenu((p) => ({ ...p, visible: false }));
+          getController()?.focus(true);
+        }}
+        onPaste={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          navigator.clipboard
+            .readText()
+            .then((t) => {
+              if (t) getController()?.triggerSafePaste(t);
+            })
+            .catch(() => {});
+          getController()?.focus(true);
+        }}
+        onAskAi={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          handleAskAi();
+        }}
+        onOpenSearch={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          setSearchOpen(true);
+        }}
+        onOpenSftp={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          toggleSftpDrawer(true);
+        }}
+        onClear={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          getController()?.clear();
+          getController()?.focus(true);
+        }}
+        onReconnect={() => {
+          setContextMenu((p) => ({ ...p, visible: false }));
+          handleReconnect();
+        }}
+      />
+
+      <PasteConfirmModal
+        tabId={tab.id}
+        text={pendingPasteText}
+        theme={currentTheme}
+        onCancel={() => {
+          setPendingPasteText(null);
+          getController()?.focus(true);
+        }}
+        onConfirm={(text) => {
+          setPendingPasteText(null);
+          getController()?.paste(text);
+          getController()?.focus(true);
+        }}
+      />
+
+      <TerminalCanvas
+        tab={tab}
+        isActive={isActive}
+        themeId={themeId}
+        fontSize={terminalFontSize || 14}
+        isSftpDrawerOpen={isSftpDrawerOpen}
+        callbacks={callbacks}
+      />
     </div>
   );
 };

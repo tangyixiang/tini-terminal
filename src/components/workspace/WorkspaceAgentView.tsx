@@ -1,10 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Send,
   Square,
-  ChevronDown,
-  ChevronRight,
-  Clock,
   Terminal,
   FileCode,
   Cpu,
@@ -22,9 +18,13 @@ import { useWorkspaceStore, createDefaultWorkspaceAgentState } from '../../store
 import { useServerStore } from '../../stores/useServerStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useAgentStore } from '../../stores/useAgentStore';
-import { BUILTIN_THEMES, getPrimaryButtonStyle } from '../../types/theme';
+import { BUILTIN_THEMES } from '../../types/theme';
 import { runWorkspaceAgentTask, abortWorkspaceAgentTask } from '../../lib/agent/workspaceRunner';
+import { isMacPlatform } from '../../lib/platform';
 import { MarkdownView } from '../agent/MarkdownView';
+import { ThinkingCard } from '../agent/shared/ThinkingCard';
+import { ApprovalBanner } from '../agent/shared/ApprovalBanner';
+import { ChatComposer } from '../agent/shared/ChatComposer';
 import type { PermissionMode, ToolCallItem } from '../../types';
 
 export const WorkspaceAgentView: React.FC = () => {
@@ -128,9 +128,7 @@ export const WorkspaceAgentView: React.FC = () => {
     clearMessages(currentWsId);
   };
 
-  const isMac =
-    typeof navigator !== 'undefined' &&
-    /(Mac|iPhone|iPod|iPad)/i.test(navigator.userAgent || navigator.platform || '');
+  const isMac = isMacPlatform();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Mac 支持 Cmd + Enter 与 Ctrl + Enter，Windows 支持 Ctrl + Enter
@@ -398,87 +396,19 @@ export const WorkspaceAgentView: React.FC = () => {
 
                 {/* 思考过程卡片 */}
                 {msg.thinking && (
-                  <div
-                    className="border rounded p-2.5 transition-colors"
-                    style={{
-                      backgroundColor: currentTheme.ui.cardBg,
-                      borderColor: currentTheme.ui.border,
-                      fontSize: `${subFontSize}px`,
-                    }}
-                  >
-                    <div
-                      className="flex items-center justify-between font-medium select-none"
-                      style={{ color: currentTheme.ui.accent, fontSize: `${subFontSize}px` }}
-                    >
-                      <span
-                        onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
-                        className="flex items-center gap-1.5 cursor-pointer flex-1"
-                      >
-                        {isLatestAssistant && !msg.content ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                        ) : (
-                          <Clock className="w-3.5 h-3.5 shrink-0" />
-                        )}
-                        <span>
-                          {isLatestAssistant && !msg.content
-                            ? `深度思考推理中 (${(elapsedMs / 1000).toFixed(1)}s)`
-                            : msg.thinkingTimeMs
-                            ? `思考与推理分析 (${(msg.thinkingTimeMs / 1000).toFixed(1)}s)`
-                            : '思考与推理分析'}
-                        </span>
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyText(`think-${msg.id}`, msg.thinking || '');
-                          }}
-                          className="p-1 rounded hover:opacity-100 opacity-60 transition-opacity cursor-pointer"
-                          style={{
-                            color:
-                              copiedId === `think-${msg.id}`
-                                ? '#10b981'
-                                : currentTheme.ui.textMuted,
-                          }}
-                          title={
-                            copiedId === `think-${msg.id}` ? '已复制' : '复制思考内容'
-                          }
-                        >
-                          {copiedId === `think-${msg.id}` ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <span
-                          onClick={() => toggleThinking(msg.id, isThinkingExpanded)}
-                          className="cursor-pointer p-0.5"
-                        >
-                          {isThinkingExpanded ? (
-                            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
-                          ) : (
-                            <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                    {isThinkingExpanded && (
-                      <div
-                        className="mt-2 whitespace-pre-wrap leading-relaxed border-t pt-2 font-mono"
-                        style={{
-                          borderColor: currentTheme.ui.border,
-                          color: currentTheme.ui.textMuted,
-                          fontSize: `${codeFontSize}px`,
-                        }}
-                      >
-                        {msg.thinking}
-                        {isLatestAssistant && !msg.content && (
-                          <span className="inline-block w-1.5 h-3.5 ml-1 bg-indigo-400 animate-pulse align-middle" />
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <ThinkingCard
+                    thinking={msg.thinking}
+                    thinkingTimeMs={msg.thinkingTimeMs}
+                    elapsedMs={elapsedMs}
+                    isStreaming={isLatestAssistant && !msg.content}
+                    isExpanded={isThinkingExpanded}
+                    isCopied={copiedId === `think-${msg.id}`}
+                    theme={currentTheme}
+                    subFontSize={subFontSize}
+                    codeFontSize={codeFontSize}
+                    onToggle={() => toggleThinking(msg.id, isThinkingExpanded)}
+                    onCopy={() => copyText(`think-${msg.id}`, msg.thinking || '')}
+                  />
                 )}
 
                 {/* 多机工具执行卡片列表 */}
@@ -812,113 +742,27 @@ export const WorkspaceAgentView: React.FC = () => {
       >
         {/* 常驻待审批操作条 */}
         {pendingToolCall && (
-          <div
-            className="mb-2.5 p-2.5 rounded-lg border flex flex-col gap-2 shadow-sm transition-all animate-in fade-in slide-in-from-bottom-2 duration-150"
-            style={{
-              backgroundColor:
-                pendingToolCall.riskLevel === 'dangerous'
-                  ? 'rgba(239, 68, 68, 0.12)'
-                  : 'rgba(245, 158, 11, 0.12)',
-              borderColor:
-                pendingToolCall.riskLevel === 'dangerous' ? '#ef4444' : '#f59e0b',
-            }}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <ShieldAlert
-                  className={`w-4 h-4 shrink-0 ${
-                    pendingToolCall.riskLevel === 'dangerous'
-                      ? 'text-red-500'
-                      : 'text-amber-500'
-                  }`}
-                />
-                <span
-                  className="font-semibold truncate"
-                  style={{ color: currentTheme.ui.text, fontSize: `${subFontSize}px` }}
-                >
-                  待授权跨机操作: {pendingToolCall.name}
-                </span>
-                {pendingToolCall.hostName && (
-                  <span className="px-1.5 py-0.2 rounded font-mono text-[10px] bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30">
-                    {pendingToolCall.hostName}
-                  </span>
-                )}
-                <span
-                  className={`px-1.5 py-0.2 rounded font-medium text-[10px] ${
-                    pendingToolCall.riskLevel === 'dangerous'
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                  }`}
-                >
-                  {pendingToolCall.riskLevel === 'dangerous' ? '高危命令' : '需确认'}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById(`ws-tool-call-${pendingToolCall.id}`);
-                  if (el) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }
-                }}
-                className="underline opacity-75 hover:opacity-100 cursor-pointer transition-opacity shrink-0"
-                style={{ color: currentTheme.ui.accent, fontSize: `${smallFontSize}px` }}
-                title="在上方对话中定位该卡片"
-              >
-                定位卡片
-              </button>
-            </div>
-
-            <div
-              className="font-terminal px-2 py-1 rounded border break-all max-h-20 overflow-y-auto"
-              style={{
-                backgroundColor: currentTheme.ui.inputBg,
-                borderColor: currentTheme.ui.border,
-                color: currentTheme.ui.text,
-                fontSize: `${codeFontSize}px`,
-              }}
-            >
-              {pendingToolCall.name === 'host_exec'
+          <ApprovalBanner
+            toolCall={pendingToolCall}
+            titlePrefix="待授权跨机操作"
+            commandText={
+              pendingToolCall.name === 'host_exec'
                 ? pendingToolCall.args?.command
-                : JSON.stringify(pendingToolCall.args)}
-            </div>
-
-            {pendingToolCall.warningMessage && (
-              <div
-                className="text-amber-500 flex items-center gap-1"
-                style={{ fontSize: `${smallFontSize}px` }}
-              >
-                <span>{pendingToolCall.warningMessage}</span>
-              </div>
-            )}
-
-            <div
-              className="flex items-center justify-end gap-2 pt-1 border-t"
-              style={{ borderColor: currentTheme.ui.border }}
-            >
-              <button
-                type="button"
-                onClick={() => respondApproval(currentWsId, false)}
-                className="px-2.5 py-1 rounded cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: currentTheme.ui.hoverBg,
-                  color: currentTheme.ui.text,
-                  fontSize: `${subFontSize}px`,
-                }}
-              >
-                拒绝
-              </button>
-              <button
-                type="button"
-                onClick={() => respondApproval(currentWsId, true)}
-                className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-medium cursor-pointer transition-colors"
-                style={{ fontSize: `${subFontSize}px` }}
-              >
-                允许执行
-              </button>
-            </div>
-          </div>
+                : JSON.stringify(pendingToolCall.args)
+            }
+            theme={currentTheme}
+            subFontSize={subFontSize}
+            smallFontSize={smallFontSize}
+            codeFontSize={codeFontSize}
+            onLocate={() => {
+              const el = document.getElementById(`ws-tool-call-${pendingToolCall.id}`);
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }}
+            onReject={() => respondApproval(currentWsId, false)}
+            onApprove={() => respondApproval(currentWsId, true)}
+          />
         )}
 
         {/* 快捷意图建议 */}
@@ -962,64 +806,29 @@ export const WorkspaceAgentView: React.FC = () => {
           </button>
         </div>
 
-        <div className="relative">
-          <textarea
-            ref={inputRef}
-            value={inputPrompt}
-            onChange={(e) => setInputPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isThinking}
-            placeholder={
-              isThinking
-                ? 'Agent 正在执行任务中...'
-                : isMac
+        <ChatComposer
+          inputRef={inputRef}
+          value={inputPrompt}
+          onChange={setInputPrompt}
+          onKeyDown={handleKeyDown}
+          onSend={handleSend}
+          onAbort={handleAbort}
+          disabled={isThinking}
+          sendDisabled={!inputPrompt.trim()}
+          isThinking={isThinking}
+          isMac={isMac}
+          placeholder={
+            isThinking
+              ? 'Agent 正在执行任务中...'
+              : isMac
                 ? '描述跨机运维诉求 (Cmd + Enter 发送)...'
                 : '描述跨机运维诉求 (Ctrl + Enter 发送)...'
-            }
-            rows={2}
-            className="w-full rounded-lg p-2.5 border focus:outline-none resize-none transition-colors"
-            style={{
-              backgroundColor: currentTheme.ui.inputBg,
-              borderColor: currentTheme.ui.border,
-              color: currentTheme.ui.text,
-              fontSize: `${baseFontSize}px`,
-            }}
-          />
-          <div className="flex items-center justify-between mt-1.5">
-            <span
-              style={{
-                color: currentTheme.ui.textMuted,
-                fontSize: `${smallFontSize}px`,
-              }}
-            >
-              {isMac ? 'Cmd + Enter 发送 / Enter 换行' : 'Ctrl + Enter 发送 / Enter 换行'}
-            </span>
-            {isThinking ? (
-              <button
-                onClick={handleAbort}
-                className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded font-medium cursor-pointer flex items-center gap-1.5 transition-colors"
-                style={{ fontSize: `${subFontSize}px` }}
-                title="中止执行"
-              >
-                <Square className="w-3 h-3 fill-current" />
-                中止
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!inputPrompt.trim()}
-                className="px-3 py-1 disabled:opacity-50 rounded font-semibold cursor-pointer flex items-center gap-1 transition-opacity hover:opacity-90"
-                style={{
-                  ...getPrimaryButtonStyle(currentTheme),
-                  fontSize: `${subFontSize}px`,
-                }}
-              >
-                <Send className="w-3 h-3" />
-                发送
-              </button>
-            )}
-          </div>
-        </div>
+          }
+          theme={currentTheme}
+          baseFontSize={baseFontSize}
+          subFontSize={subFontSize}
+          smallFontSize={smallFontSize}
+        />
       </div>
     </section>
   );
